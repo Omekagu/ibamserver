@@ -334,9 +334,11 @@ exports.googleCallback = asyncHandler(async (req, res) => {
 
   const { id: googleId, email, name, picture, verified_email } = profileRes.data;
 
+  const CLIENT = process.env.CLIENT_URL || 'https://ibamhealth.com';
+
   const errorDest = (msg) => platform === 'mobile'
     ? `ibam://auth/error?message=${encodeURIComponent(msg)}`
-    : `/login?error=${encodeURIComponent(msg)}`;
+    : `${CLIENT}/login?error=${encodeURIComponent(msg)}`;
 
   // Reject unverified Google accounts
   if (!verified_email) {
@@ -347,10 +349,15 @@ exports.googleCallback = asyncHandler(async (req, res) => {
   const user = await User.findOne({ $or: [{ googleId }, { email }] });
 
   if (!user) {
-    const dest = platform === 'mobile'
-      ? `ibam://auth/error?message=${encodeURIComponent('No account found. Please sign up first.')}`
-      : `/signup?error=${encodeURIComponent('No iBam account found for this Google address. Please sign up first.')}`;
-    return res.redirect(dest);
+    if (platform === 'mobile') {
+      return res.redirect(`ibam://auth/error?message=${encodeURIComponent('No account found. Please sign up first.')}`);
+    }
+    // Web: send to signup with email pre-filled and a friendly prompt
+    const params = new URLSearchParams({
+      googleEmail: email,
+      message: `No iBam account found for ${email}. Create one below to continue with Google.`,
+    });
+    return res.redirect(`${CLIENT}/signup?${params.toString()}`);
   }
 
   // Partner and admin accounts must use email/password
