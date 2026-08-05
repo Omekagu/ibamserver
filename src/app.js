@@ -46,7 +46,21 @@ app.use((req, res, next) => {
 
 // Security & middleware
 app.use(helmet())
-app.use(cors({ origin: process.env.CLIENT_URL || '*', credentials: true }))
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Allow requests with no origin (native mobile apps, Postman, server-to-server)
+      // and any browser origin — restrict per-env in production via CLIENT_URL allowlist
+      if (!origin) return callback(null, true)
+      const allowed = [process.env.CLIENT_URL].filter(Boolean)
+      if (allowed.includes(origin) || process.env.NODE_ENV !== 'production') {
+        return callback(null, true)
+      }
+      callback(new Error(`CORS: origin ${origin} not allowed`))
+    },
+    credentials: true
+  })
+)
 app.use(compression())
 if (process.env.NODE_ENV !== 'test') app.use(morgan('dev'))
 

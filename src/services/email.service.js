@@ -50,11 +50,18 @@ const para = (t) => `<p style="margin:12px 0;font-size:14px;color:#4B5563;line-h
 const info = (label, value) =>
   `<div style="display:flex;justify-content:space-between;align-items:center;padding:11px 0;border-bottom:1px solid #F3F4F6"><span style="font-size:13px;color:#9CA3AF;font-weight:500">${label}</span><span style="font-size:13px;color:#0D1B2A;font-weight:700">${value}</span></div>`;
 const numberedList = (items) =>
-  `<div style="margin:20px 0">${items.map((text, i) =>
-    `<div style="display:flex;align-items:flex-start;gap:14px;margin-bottom:14px">
-      <div style="flex-shrink:0;width:28px;height:28px;border-radius:50%;background:#22C55E;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;color:#0D1B2A;text-align:center;line-height:28px">${i + 1}</div>
-      <p style="margin:4px 0 0;font-size:14px;color:#4B5563;line-height:1.6">${text}</p>
-    </div>`).join('')}</div>`;
+  `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:20px 0">
+    ${items.map((text, i) =>
+      `<tr>
+        <td width="40" style="vertical-align:top;padding-bottom:16px">
+          <div style="width:28px;height:28px;border-radius:50%;background:#F1F5F9;font-size:12px;font-weight:800;color:#374151;text-align:center;line-height:28px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">${i + 1}</div>
+        </td>
+        <td style="vertical-align:top;padding-bottom:16px;padding-left:4px">
+          <p style="margin:4px 0 0;font-size:14px;color:#4B5563;line-height:1.65">${text}</p>
+        </td>
+      </tr>`
+    ).join('')}
+  </table>`;
 
 const APP_URL = process.env.CLIENT_URL || 'https://ibamhealth.com';
 
@@ -113,19 +120,27 @@ const sendOTPEmail = (email, otp) =>
 const sendWelcomeEmail = (user) =>
   sendEmail({
     to: user.email,
-    subject: 'Welcome to iBam Health',
+    subject: `Welcome to iBam Health, ${user.name.split(' ')[0]}!`,
     html: base(`
-      ${h2(`Welcome aboard, ${user.name}!`)}
-      ${para('Your iBam Health account is ready. Here is what you can do:')}
+      <div style="background:#F0FDF4;border-radius:10px;padding:20px 24px;margin-bottom:24px;border-left:4px solid #22C55E">
+        <p style="margin:0;font-size:13px;font-weight:700;color:#15803D;text-transform:uppercase;letter-spacing:0.06em">Account Activated</p>
+        <p style="margin:4px 0 0;font-size:22px;font-weight:800;color:#0D1B2A;line-height:1.25">Welcome, ${user.name.split(' ')[0]}!</p>
+      </div>
+      <p style="margin:0 0 6px;font-size:15px;color:#111827;line-height:1.65">Your <strong>iBam Health</strong> account is set up and ready to use.</p>
+      <p style="margin:0 0 20px;font-size:14px;color:#6B7280;line-height:1.65">Here is everything you can do from day one:</p>
       ${numberedList([
-        'Book video, audio, or chat consultations with verified doctors',
-        'Request lab tests with home or walk-in sample collection',
-        'Order medications from partner pharmacies',
-        'Access your complete health records anytime',
+        '<strong>Video, audio &amp; chat consultations</strong> — book with verified doctors at any time',
+        '<strong>Lab test requests</strong> — home visit or walk-in sample collection',
+        '<strong>Pharmacy orders</strong> — prescription and OTC medications delivered to you',
+        '<strong>Health records</strong> — access your full medical history anytime',
       ])}
-      ${btn(`${APP_URL}/patient`, 'Go to Dashboard')}
+      ${btn(`${APP_URL}/patient`, 'Open My Dashboard →')}
+      <p style="margin:28px 0 0;font-size:12px;color:#9CA3AF;line-height:1.7;border-top:1px solid #F3F4F6;padding-top:20px">
+        Questions? We are here to help — reach us at
+        <a href="mailto:support@ibamhealth.com" style="color:#22C55E;text-decoration:none;font-weight:600">support@ibamhealth.com</a>
+      </p>
     `),
-    text: `Welcome to iBam Health, ${user.name}! Your account is ready at ${APP_URL}/patient`,
+    text: `Welcome to iBam Health, ${user.name}! Your account is ready. Visit ${APP_URL}/patient to get started.`,
   });
 
 const sendPasswordResetEmail = (user, resetUrl) =>
