@@ -1,4 +1,6 @@
 const DoctorEarning = require('../models/DoctorEarning');
+const { notifyAdmins } = require('../services/notification.service');
+const { sendAdminAlertEmail } = require('../services/email.service');
 const { sendSuccess } = require('../utils/response');
 const AppError = require('../utils/AppError');
 const asyncHandler = require('../utils/asyncHandler');
@@ -29,5 +31,20 @@ exports.requestPayout = asyncHandler(async (req, res, next) => {
   await DoctorEarning.updateMany({ _id: { $in: ids } }, { payoutStatus: 'requested', payoutRequestedAt: new Date() });
 
   const totalRequested = pendingEarnings.reduce((sum, e) => sum + e.netAmount, 0);
+
+  notifyAdmins({
+    type: 'payout_requested',
+    title: 'Payout Request',
+    message: `Dr. ${req.user.name} requested a payout of ₦${totalRequested.toLocaleString('en-NG')}.`,
+    metadata: { doctorId: req.user._id, amount: totalRequested, count: pendingEarnings.length },
+  }).catch(() => {});
+  sendAdminAlertEmail({
+    subject: `Payout request — Dr. ${req.user.name}`,
+    headline: 'Doctor Payout Request',
+    body: `Dr. ${req.user.name} has requested a payout of ₦${totalRequested.toLocaleString('en-NG')} for ${pendingEarnings.length} consultation${pendingEarnings.length !== 1 ? 's' : ''}.`,
+    ctaLabel: 'Review Payouts',
+    ctaUrl: `${process.env.CLIENT_URL || 'https://ibamhealth.com'}/admin/payouts`,
+  }).catch(() => {});
+
   sendSuccess(res, 200, 'Payout requested.', { totalRequested, count: pendingEarnings.length });
 });

@@ -2,7 +2,7 @@ const Appointment = require('../models/Appointment');
 const Availability = require('../models/Availability');
 const Doctor = require('../models/Doctor');
 const User = require('../models/User');
-const { createNotification } = require('../services/notification.service');
+const { createNotification, notifyAdmins } = require('../services/notification.service');
 const { sendAppointmentBookedPatientEmail } = require('../services/email.service');
 const { sendSuccess } = require('../utils/response');
 const AppError = require('../utils/AppError');
@@ -59,6 +59,13 @@ exports.book = asyncHandler(async (req, res, next) => {
     doctorName: doctorUser?.name || 'Doctor',
     type,
     scheduledAt,
+  }).catch(() => {});
+
+  notifyAdmins({
+    type: 'appointment_booked',
+    title: 'New Appointment Booked',
+    message: `${req.user.name} booked a ${type} appointment with Dr. ${doctorUser?.name || 'a doctor'}.`,
+    metadata: { appointmentId: appointment._id, patientId: req.user._id, doctorId },
   }).catch(() => {});
 
   sendSuccess(res, 201, 'Appointment booked.', { appointment });

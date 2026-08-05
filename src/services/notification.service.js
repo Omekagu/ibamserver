@@ -236,6 +236,20 @@ const createNotification = async ({ userId, type, title, message, metadata = {},
   return notification;
 };
 
+// Broadcast an in-app notification to every active admin user.
+// Fire-and-forget safe — errors are logged but never thrown.
+const notifyAdmins = async ({ type, title, message, metadata = {} }) => {
+  try {
+    const admins = await User.find({ role: 'admin', isActive: true }).select('_id').lean();
+    if (!admins.length) return;
+    await Promise.allSettled(
+      admins.map(admin => createNotification({ userId: admin._id, type, title, message, metadata }))
+    );
+  } catch (err) {
+    console.error('[notifyAdmins]', err.message);
+  }
+};
+
 const markAsRead = async (notificationId, userId) => {
   return Notification.findOneAndUpdate(
     { _id: notificationId, user: userId },
@@ -248,4 +262,4 @@ const markAllAsRead = async (userId) => {
   return Notification.updateMany({ user: userId, isRead: false }, { isRead: true });
 };
 
-module.exports = { createNotification, markAsRead, markAllAsRead };
+module.exports = { createNotification, notifyAdmins, markAsRead, markAllAsRead };

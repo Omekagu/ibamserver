@@ -3,7 +3,7 @@ const PharmacyOrder = require('../models/PharmacyOrder');
 const Prescription = require('../models/Prescription');
 const User = require('../models/User');
 const { uploadBuffer } = require('../services/cloudinary.service');
-const { createNotification } = require('../services/notification.service');
+const { createNotification, notifyAdmins } = require('../services/notification.service');
 const { sendAdminAlertEmail } = require('../services/email.service');
 const { sendSuccess } = require('../utils/response');
 const AppError = require('../utils/AppError');
@@ -45,6 +45,13 @@ exports.onboard = asyncHandler(async (req, res, next) => {
     ctaLabel: 'Review Partners',
     ctaUrl: `${process.env.CLIENT_URL || 'http://localhost:3000'}/admin/partners`,
   }).catch(err => console.error('[Email] Admin pharmacy alert failed:', err.message));
+
+  notifyAdmins({
+    type: 'partner_onboarded',
+    title: 'New Pharmacy Application',
+    message: `${name} applied to join as a pharmacy partner and is awaiting review.`,
+    metadata: { partnerId: partner._id, email },
+  }).catch(() => {});
 
   sendSuccess(res, 201, 'Application submitted. You will be notified once approved.', { partner });
 });
@@ -145,6 +152,20 @@ exports.placeOrder = asyncHandler(async (req, res, next) => {
     emailData: { pharmacyName: pharmacyRecord?.name || 'Pharmacy', items: prescriptionItems },
   }).catch(err => console.error('[Notification] Pharmacy order placed:', err.message));
 
+  notifyAdmins({
+    type: 'pharmacy_order_placed',
+    title: 'New Prescription Order',
+    message: `${req.user.name} placed a prescription order${pharmacyRecord ? ` at ${pharmacyRecord.name}` : ''}.`,
+    metadata: { orderId: order._id, patientId: req.user._id },
+  }).catch(() => {});
+  sendAdminAlertEmail({
+    subject: `New prescription order — ${req.user.name}`,
+    headline: 'New Prescription Order',
+    body: `${req.user.name} placed a prescription order${pharmacyRecord ? ` at ${pharmacyRecord.name}` : ''}.`,
+    ctaLabel: 'View Orders',
+    ctaUrl: `${process.env.CLIENT_URL || 'https://ibamhealth.com'}/admin/orders`,
+  }).catch(() => {});
+
   sendSuccess(res, 201, 'Order placed.', { order });
 });
 
@@ -218,16 +239,15 @@ exports.placeDirectOrder = asyncHandler(async (req, res, next) => {
     }).catch(err => console.error('[Notification] Pharmacy partner direct order:', err.message));
   }
 
-  // Notify admin if order requires approval
-  if (requiresApproval) {
-    sendAdminAlertEmail({
-      subject: 'New pharmacy order awaiting approval',
-      headline: 'Pharmacy Order Pending Approval',
-      body: `${req.user.name || 'A patient'} placed an order from ${pharmacy.name} containing prescription drugs that require admin approval.`,
-      ctaLabel: 'Review Order',
-      ctaUrl: `${process.env.CLIENT_URL || 'https://ibamhealth.com'}/admin/orders`,
-    }).catch(err => console.error('[Email] Admin pharmacy order alert:', err.message));
-  }
+  sendAdminAlertEmail({
+    subject: requiresApproval ? `Pharmacy order awaiting approval — ${req.user.name}` : `New pharmacy order — ${req.user.name}`,
+    headline: requiresApproval ? 'Pharmacy Order Pending Approval' : 'New Pharmacy Order',
+    body: requiresApproval
+      ? `${req.user.name || 'A patient'} placed an order from ${pharmacy.name} containing prescription drugs that require admin approval.`
+      : `${req.user.name || 'A patient'} placed an order from ${pharmacy.name}.`,
+    ctaLabel: requiresApproval ? 'Review Order' : 'View Orders',
+    ctaUrl: `${process.env.CLIENT_URL || 'https://ibamhealth.com'}/admin/orders`,
+  }).catch(err => console.error('[Email] Admin pharmacy order alert:', err.message));
 
   createNotification({
     userId: req.user._id,
@@ -239,6 +259,13 @@ exports.placeDirectOrder = asyncHandler(async (req, res, next) => {
     metadata: { orderId: order._id },
     emailData: { pharmacyName: pharmacy.name, items: orderItems },
   }).catch(err => console.error('[Notification] Direct order placed:', err.message));
+
+  notifyAdmins({
+    type: 'pharmacy_order_placed',
+    title: requiresApproval ? 'Order Awaiting Approval' : 'New Pharmacy Order',
+    message: `${req.user.name || 'A patient'} ordered from ${pharmacy.name}${requiresApproval ? ' — contains prescription drugs, requires approval' : ''}.`,
+    metadata: { orderId: order._id, patientId: req.user._id, requiresApproval },
+  }).catch(() => {});
 
   sendSuccess(res, 201, 'Order placed.', { order, requiresApproval });
 });

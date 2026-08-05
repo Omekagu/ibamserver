@@ -3,7 +3,8 @@ const Doctor         = require('../models/Doctor');
 const PharmacyPartner = require('../models/PharmacyPartner');
 const LabPartner     = require('../models/LabPartner');
 const { lookupNIN, faceMatch, lookupCAC } = require('../services/dojah.service');
-const { createNotification } = require('../services/notification.service');
+const { createNotification, notifyAdmins } = require('../services/notification.service');
+const { sendAdminAlertEmail } = require('../services/email.service');
 const { sendSuccess } = require('../utils/response');
 const AppError = require('../utils/AppError');
 const asyncHandler = require('../utils/asyncHandler');
@@ -148,6 +149,20 @@ exports.verifyFace = asyncHandler(async (req, res, next) => {
       message: 'Your identity has been verified. Your account is now pending licence review by our team.',
       emailData: {},
     });
+
+    notifyAdmins({
+      type: 'kyc_submitted',
+      title: 'KYC Submitted for Review',
+      message: `${req.user.name} completed identity verification and is awaiting licence review.`,
+      metadata: { userId: req.user._id, role: req.user.role },
+    }).catch(() => {});
+    sendAdminAlertEmail({
+      subject: `KYC submitted — ${req.user.name}`,
+      headline: 'KYC Awaiting Review',
+      body: `${req.user.name} (${req.user.email}) has completed identity verification and is now awaiting licence review.`,
+      ctaLabel: 'Review KYC',
+      ctaUrl: `${process.env.CLIENT_URL || 'https://ibamhealth.com'}/admin/approvals`,
+    }).catch(() => {});
   }
 
   sendSuccess(res, matchResult.match ? 200 : 422,

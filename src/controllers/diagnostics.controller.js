@@ -5,7 +5,7 @@ const FieldAgent = require('../models/FieldAgent');
 const HomeVisitSchedule = require('../models/HomeVisitSchedule');
 const User = require('../models/User');
 const { uploadBuffer } = require('../services/cloudinary.service');
-const { createNotification } = require('../services/notification.service');
+const { createNotification, notifyAdmins } = require('../services/notification.service');
 const { sendAdminAlertEmail } = require('../services/email.service');
 const { sendSuccess } = require('../utils/response');
 const AppError = require('../utils/AppError');
@@ -47,6 +47,13 @@ exports.onboardLab = asyncHandler(async (req, res, next) => {
     ctaLabel: 'Review Partners',
     ctaUrl: `${process.env.CLIENT_URL || 'http://localhost:3000'}/admin/partners`,
   }).catch(err => console.error('[Email] Admin lab alert failed:', err.message));
+
+  notifyAdmins({
+    type: 'partner_onboarded',
+    title: 'New Lab Partner Application',
+    message: `${name} applied to join as a lab partner and is awaiting review.`,
+    metadata: { labId: lab._id, email },
+  }).catch(() => {});
 
   sendSuccess(res, 201, 'Lab application submitted. You will be notified once approved.', { lab });
 });
@@ -130,7 +137,7 @@ exports.requestTests = asyncHandler(async (req, res, next) => {
     emailData: { tests, collectionType },
   }).catch(err => console.error('[Notification] Lab request placed:', err.message));
 
-  // Notify admin about the new lab test request
+  // Notify admin (email + in-app) about the new lab test request
   sendAdminAlertEmail({
     subject: requiresApproval ? 'New lab test request awaiting approval' : 'New lab test request submitted',
     headline: 'New Lab Test Request',
@@ -138,6 +145,13 @@ exports.requestTests = asyncHandler(async (req, res, next) => {
     ctaLabel: requiresApproval ? 'Review Approvals' : 'View Requests',
     ctaUrl: `${process.env.CLIENT_URL || 'https://ibamhealth.com'}/admin/diagnostics`,
   }).catch(err => console.error('[Email] Admin lab test alert:', err.message));
+
+  notifyAdmins({
+    type: 'lab_request_placed',
+    title: requiresApproval ? 'Lab Request Awaiting Approval' : 'New Lab Test Request',
+    message: `${req.user.name || 'A patient'} requested: ${tests.slice(0, 2).join(', ')}${tests.length > 2 ? ` +${tests.length - 2} more` : ''}.${requiresApproval ? ' Requires admin approval.' : ''}`,
+    metadata: { requestId: request._id, patientId: req.user._id, requiresApproval },
+  }).catch(() => {});
 
   // Notify lab partner if one was selected
   if (selectedLab?.user) {

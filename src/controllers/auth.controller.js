@@ -6,7 +6,8 @@ const Doctor = require('../models/Doctor');
 const { signAccessToken, signRefreshToken, verifyRefreshToken } = require('../utils/jwt');
 const { generateOTP, storeOTP, verifyOTP } = require('../utils/otp');
 const { sendSMS } = require('../services/termii.service');
-const { sendWelcomeEmail, sendPasswordResetEmail, sendOTPEmail, sendPasswordChangedEmail } = require('../services/email.service');
+const { sendWelcomeEmail, sendPasswordResetEmail, sendOTPEmail, sendPasswordChangedEmail, sendAdminAlertEmail } = require('../services/email.service');
+const { notifyAdmins } = require('../services/notification.service');
 const { sendSuccess } = require('../utils/response');
 const AppError = require('../utils/AppError');
 const asyncHandler = require('../utils/asyncHandler');
@@ -84,6 +85,21 @@ exports.register = asyncHandler(async (req, res, next) => {
     await sendOTPEmail(user.email, otp);
   } catch { /* non-fatal */ }
   sendWelcomeEmail(user).catch(() => {});
+
+  const roleLabel = user.role === 'doctor' ? 'Doctor' : 'Patient';
+  notifyAdmins({
+    type: 'new_registration',
+    title: `New ${roleLabel} Registered`,
+    message: `${user.name} signed up as a ${roleLabel.toLowerCase()}.`,
+    metadata: { userId: user._id, role: user.role, email: user.email },
+  }).catch(() => {});
+  sendAdminAlertEmail({
+    subject: `New ${roleLabel} registered — ${user.name}`,
+    headline: `New ${roleLabel} Registration`,
+    body: `${user.name} (${user.email}) has just registered as a ${roleLabel.toLowerCase()} on iBam Health.`,
+    ctaLabel: `View ${roleLabel}s`,
+    ctaUrl: `${process.env.CLIENT_URL || 'https://ibamhealth.com'}/admin/users`,
+  }).catch(() => {});
 
   const tokens = issueTokens(user);
   user.refreshToken = tokens.refreshToken;

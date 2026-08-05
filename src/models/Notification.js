@@ -6,14 +6,26 @@ const notificationSchema = new mongoose.Schema(
     type: {
       type: String,
       enum: [
-        'appointment_booked', 'appointment_booked_patient', 'appointment_confirmed', 'appointment_cancelled',
-        'appointment_reminder', 'consultation_started', 'consultation_ended',
-        'prescription_ready', 'pharmacy_order_update', 'lab_result_ready',
-        'home_visit_scheduled', 'sample_collected', 'payment_success',
-        'subscription_activated', 'subscription_cancelled', 'payout_processed',
-        'doctor_approved', 'partner_approved', 'drug_approval',
-        'order_approval', 'test_request_approval',
-        'follow_up_scheduled', 'general',
+        // Appointments
+        'appointment_booked', 'appointment_booked_patient', 'appointment_confirmed',
+        'appointment_cancelled', 'appointment_reminder', 'follow_up_scheduled',
+        // Consultations
+        'consultation_started', 'consultation_ended',
+        // Prescriptions & medications
+        'prescription_ready', 'pharmacy_order_placed', 'pharmacy_order_update',
+        'order_approval', 'drug_approval',
+        // Lab / diagnostics
+        'lab_request_placed', 'lab_result_ready', 'test_request_approval',
+        'home_visit_scheduled', 'sample_collected',
+        // Payments & subscriptions
+        'payment_success', 'payout_processed', 'payout_requested',
+        'subscription_activated', 'subscription_cancelled',
+        // Account / KYC / approvals
+        'new_registration', 'kyc_submitted', 'partner_onboarded',
+        'doctor_approved', 'doctor_rejected',
+        'partner_approved', 'partner_rejected',
+        // Misc
+        'general',
       ],
       required: true,
     },
