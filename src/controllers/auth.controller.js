@@ -22,6 +22,31 @@ const loginAttempts = new Map(); // email → { count, lockedUntil }
 const MAX_ATTEMPTS = 5;
 const LOCK_DURATION_MS = 15 * 60 * 1000;
 
+// ── In-memory Google pending-signup store ──────────────────────────────────
+const googlePendingStore = new Map(); // token → { googleId, name, email, picture, expiresAt }
+const GOOGLE_PENDING_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+function storePendingGoogle (profile) {
+  const token = crypto.randomBytes(16).toString('hex');
+  googlePendingStore.set(token, { ...profile, expiresAt: Date.now() + GOOGLE_PENDING_TTL_MS });
+  return token;
+}
+
+function consumePendingGoogle (token) {
+  const entry = googlePendingStore.get(token);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) { googlePendingStore.delete(token); return null; }
+  googlePendingStore.delete(token); // one-time use
+  return entry;
+}
+
+function peekPendingGoogle (token) {
+  const entry = googlePendingStore.get(token);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) { googlePendingStore.delete(token); return null; }
+  return entry;
+}
+
 function checkLoginLock(email) {
   const record = loginAttempts.get(email);
   if (!record) return null;
@@ -352,12 +377,9 @@ exports.googleCallback = asyncHandler(async (req, res) => {
     if (platform === 'mobile') {
       return res.redirect(`ibam://auth/error?message=${encodeURIComponent('No account found. Please sign up first.')}`);
     }
-    // Web: send to signup with email pre-filled and a friendly prompt
-    const params = new URLSearchParams({
-      googleEmail: email,
-      message: `No iBam account found for ${email}. Create one below to continue with Google.`,
-    });
-    return res.redirect(`${CLIENT}/signup?${params.toString()}`);
+    // Web: store Google profile in pending store and redirect to signup for role selection
+    const pendingToken = storePendingGoogle({ googleId, name, email, picture });
+    return res.redirect(`${CLIENT}/signup?googleToken=${encodeURIComponent(pendingToken)}`);
   }
 
   // Partner and admin accounts must use email/password
@@ -371,16 +393,13 @@ exports.googleCallback = asyncHandler(async (req, res) => {
     return res.redirect(errorDest('Your account has been deactivated. Please contact support.'));
   }
 
+  // Link Google ID on first sign-in for existing email/password accounts
   const isNewGoogleLink = !user.googleId;
-
-  // Link Google ID on first Google sign-in
   if (isNewGoogleLink) {
     user.googleId = googleId;
     if (picture && !user.avatar) user.avatar = picture;
-    // Mark email verified since Google has confirmed it
     if (!user.isVerified) user.isVerified = true;
     await user.save({ validateBeforeSave: false });
-    // Send welcome email only on first-time Google link
     sendWelcomeEmail(user).catch(() => {});
   }
 
@@ -402,4 +421,89 @@ exports.googleCallback = asyncHandler(async (req, res) => {
   return res.redirect(
     `${redirectUrl}?token=${tokenParam}&refreshToken=${refreshParam}&user=${userParam}`
   );
+});
+
+// GET /api/auth/google/pending?token=...
+exports.getGooglePending = asyncHandler(async (req, res, next) => {
+  const { token } = req.query;
+  if (!token) return next(new AppError('token is required.', 400));
+  const profile = peekPendingGoogle(token);
+  if (!profile) return next(new AppError('Link expired or invalid. Please try Google sign-in again.', 410));
+  sendSuccess(res, 200, 'Pending profile retrieved.', {
+    name: profile.name,
+    email: profile.email,
+    picture: profile.picture,
+  });
+});
+
+// POST /api/auth/google/complete
+exports.completeGoogleSignup = asyncHandler(async (req, res, next) => {
+  const { token, role, phone, specialization, licenseNumber } = req.body;
+  if (!token) return next(new AppError('token is required.', 400));
+
+  const pending = consumePendingGoogle(token);
+  if (!pending) return next(new AppError('Link expired. Please try Google sign-in again.', 410));
+
+  const allowedRoles = ['patient', 'doctor'];
+  if (!allowedRoles.includes(role)) return next(new AppError('Invalid role.', 400));
+
+  if (role === 'doctor') {
+    if (!specialization || !licenseNumber) {
+      return next(new AppError('Doctors must provide specialization and license number.', 400));
+    }
+    const licenseExists = await Doctor.findOne({ licenseNumber });
+    if (licenseExists) return next(new AppError('A doctor with that licence number is already registered.', 409));
+  }
+
+  const existing = await User.findOne({ $or: [{ googleId: pending.googleId }, { email: pending.email }] });
+  if (existing) return next(new AppError('An account with this email already exists. Please log in instead.', 409));
+
+  let user;
+  try {
+    user = await User.create({
+      name: pending.name || pending.email.split('@')[0],
+      email: pending.email,
+      googleId: pending.googleId,
+      avatar: pending.picture || undefined,
+      role,
+      isVerified: true,
+      password: crypto.randomBytes(32).toString('hex'),
+      ...(phone && { phone }),
+    });
+  } catch (err) {
+    return next(new AppError(err.code === 11000 ? 'An account with this email already exists.' : 'Registration failed. Please try again.', 409));
+  }
+
+  try {
+    if (role === 'patient') {
+      await Patient.create({ user: user._id });
+    } else if (role === 'doctor') {
+      await Doctor.create({ user: user._id, specialization, licenseNumber, employmentType: 'freelancer' });
+    }
+  } catch (profileErr) {
+    await User.findByIdAndDelete(user._id);
+    return next(new AppError(profileErr.code === 11000 ? 'A doctor with that licence number is already registered.' : 'Registration failed. Please try again.', 409));
+  }
+
+  sendWelcomeEmail(user).catch(() => {});
+  const roleLabel = role === 'doctor' ? 'Doctor' : 'Patient';
+  notifyAdmins({
+    type: 'new_registration',
+    title: `New ${roleLabel} Registered (Google)`,
+    message: `${user.name} created a ${roleLabel.toLowerCase()} account via Google.`,
+    metadata: { userId: user._id, role, email: user.email },
+  }).catch(() => {});
+  sendAdminAlertEmail({
+    subject: `New ${roleLabel} registered via Google — ${user.name}`,
+    headline: `New ${roleLabel} Registration (Google)`,
+    body: `${user.name} (${user.email}) created a new ${roleLabel.toLowerCase()} account via Google OAuth.`,
+    ctaLabel: `View ${roleLabel}s`,
+    ctaUrl: `${process.env.CLIENT_URL || 'https://ibamhealth.com'}/admin/users`,
+  }).catch(() => {});
+
+  const tokens = issueTokens(user);
+  user.refreshToken = tokens.refreshToken;
+  await user.save({ validateBeforeSave: false });
+
+  sendSuccess(res, 201, 'Account created successfully.', { user, ...tokens });
 });

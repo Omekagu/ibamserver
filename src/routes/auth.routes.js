@@ -114,5 +114,7 @@ router.delete('/push-token', protect, ctrl.clearPushToken);
 // Google OAuth
 router.get('/google', ctrl.googleRedirect);
 router.get('/google/callback', ctrl.googleCallback);
+router.get('/google/pending', ctrl.getGooglePending);
+router.post('/google/complete', ctrl.completeGoogleSignup);
 
 module.exports = router;
