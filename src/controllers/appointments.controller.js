@@ -14,10 +14,27 @@ exports.book = asyncHandler(async (req, res, next) => {
   const doctor = await Doctor.findOne({ user: doctorId, isApproved: true });
   if (!doctor) return next(new AppError('Doctor not found or not approved.', 404));
 
-  // Mark slot as booked
+  // ── Prevent double-booking ─────────────────────────────────────────────────
+  const conflict = await Appointment.findOne({
+    doctor: doctorId,
+    scheduledAt: new Date(scheduledAt),
+    status: { $nin: ['cancelled'] },
+  });
+  if (conflict) return next(new AppError('This time slot is already booked. Please select a different time.', 409));
+
+  // ── Mark slot as booked ────────────────────────────────────────────────────
+  const scheduledDate = new Date(scheduledAt);
+  const slotTime = `${String(scheduledDate.getHours()).padStart(2, '0')}:${String(scheduledDate.getMinutes()).padStart(2, '0')}`;
+
   if (availabilityId && slotId) {
     await Availability.findOneAndUpdate(
-      { _id: availabilityId, 'slots._id': slotId },
+      { _id: availabilityId, 'slots._id': slotId, 'slots.isBooked': false },
+      { $set: { 'slots.$.isBooked': true } }
+    );
+  } else {
+    // Fall back to time-based lookup when client doesn't send explicit IDs
+    await Availability.findOneAndUpdate(
+      { doctor: doctor._id, isActive: true, 'slots.startTime': slotTime, 'slots.isBooked': false },
       { $set: { 'slots.$.isBooked': true } }
     );
   }

@@ -18,6 +18,7 @@ router.get('/settings', asyncHandler(async (req, res) => {
 router.use(protect);
 
 router.post('/initiate', ctrl.initiate);
+router.post('/submit-transfer', ctrl.submitTransfer);
 router.get('/verify/:reference', ctrl.verify);
 router.get('/mine', ctrl.getMine);
 

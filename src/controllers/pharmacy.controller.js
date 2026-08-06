@@ -1,5 +1,7 @@
+const { randomUUID } = require('crypto');
 const PharmacyPartner = require('../models/PharmacyPartner');
 const PharmacyOrder = require('../models/PharmacyOrder');
+const Payment = require('../models/Payment');
 const Prescription = require('../models/Prescription');
 const User = require('../models/User');
 const { uploadBuffer } = require('../services/cloudinary.service');
@@ -282,6 +284,28 @@ exports.updateOrderStatus = asyncHandler(async (req, res, next) => {
 
   if (status) order.status = status;
   if (totalAmount !== undefined && totalAmount >= 0) order.totalAmount = totalAmount;
+
+  // When a pharmacy partner confirms a walk-in/pickup order as processing,
+  // record the cash payment so the platform has an audit trail
+  if (
+    status === 'processing' &&
+    order.fulfillmentType === 'pickup' &&
+    !order.paymentRef &&
+    order.totalAmount > 0
+  ) {
+    const reference = `ibam_wic_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
+    const payment = await Payment.create({
+      user:     order.patient,
+      amount:   order.totalAmount * 100, // store in kobo
+      reference,
+      type:     'pharmacy',
+      method:   'walk_in_cash',
+      serviceRef: order._id,
+      status:   'success',
+    });
+    order.paymentRef = payment._id;
+  }
+
   await order.save();
 
   await createNotification({

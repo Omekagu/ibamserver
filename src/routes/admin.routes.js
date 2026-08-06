@@ -19,6 +19,7 @@ router.get('/users', ctrl.getUsers);
 router.put('/users/:id/suspend', audit('suspend_user', 'User'), ctrl.suspendUser);
 router.get('/appointments', ctrl.getAppointments);
 router.get('/payments', ctrl.getPayments);
+router.put('/payments/:id/confirm', audit('confirm_payment', 'Payment'), ctrl.confirmPayment);
 router.get('/subscriptions', ctrl.getSubscriptions);
 router.get('/payouts', ctrl.getPayouts);
 router.put('/payouts/:id/approve', audit('approve_payout', 'DoctorEarning'), ctrl.approvePayout);

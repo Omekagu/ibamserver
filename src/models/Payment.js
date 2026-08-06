@@ -11,6 +11,11 @@ const paymentSchema = new mongoose.Schema(
       enum: ['consultation', 'pharmacy', 'lab_test', 'subscription'],
       required: true,
     },
+    method: {
+      type: String,
+      enum: ['paystack', 'direct_transfer', 'walk_in_cash'],
+      default: 'paystack',
+    },
     serviceRef: { type: mongoose.Schema.Types.ObjectId },
     serviceModel: { type: String },
     status: {
@@ -18,6 +23,8 @@ const paymentSchema = new mongoose.Schema(
       enum: ['pending', 'success', 'failed', 'refunded'],
       default: 'pending',
     },
+    transferReference: { type: String },
+    adminNotes:        { type: String },
   },
   { timestamps: true }
 );

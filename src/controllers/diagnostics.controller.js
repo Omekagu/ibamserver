@@ -1,6 +1,8 @@
+const { randomUUID } = require('crypto');
 const DiagnosticsRequest = require('../models/DiagnosticsRequest');
 const LabPartner = require('../models/LabPartner');
 const LabResult = require('../models/LabResult');
+const Payment = require('../models/Payment');
 const FieldAgent = require('../models/FieldAgent');
 const HomeVisitSchedule = require('../models/HomeVisitSchedule');
 const User = require('../models/User');
@@ -310,6 +312,27 @@ exports.updateLabRequestStatus = asyncHandler(async (req, res, next) => {
 
   const allowed = ['assigned', 'collected', 'completed'];
   if (!allowed.includes(status)) return next(new AppError(`Status must be one of: ${allowed.join(', ')}.`, 400));
+
+  // When a lab partner marks a walk-in request as assigned (= patient arrived and paid),
+  // record the cash payment for the audit trail
+  if (
+    status === 'assigned' &&
+    request.collectionType === 'walk_in' &&
+    !request.paymentRef &&
+    request.totalAmount > 0
+  ) {
+    const reference = `ibam_wil_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
+    const payment = await Payment.create({
+      user:       request.patient,
+      amount:     request.totalAmount * 100,
+      reference,
+      type:       'lab_test',
+      method:     'walk_in_cash',
+      serviceRef: request._id,
+      status:     'success',
+    });
+    request.paymentRef = payment._id;
+  }
 
   request.status = status;
   if (resultNotes) request.resultNotes = resultNotes;

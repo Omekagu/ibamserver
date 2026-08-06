@@ -133,10 +133,11 @@ exports.getAppointments = asyncHandler(async (req, res) => {
 });
 
 exports.getPayments = asyncHandler(async (req, res) => {
-  const { status, type, page = 1, limit = 20 } = req.query;
+  const { status, type, method, page = 1, limit = 20 } = req.query;
   const filter = {};
   if (status) filter.status = status;
-  if (type) filter.type = type;
+  if (type)   filter.type   = type;
+  if (method) filter.method = method;
 
   const payments = await Payment.find(filter)
     .populate('user', 'name email')
@@ -145,6 +146,57 @@ exports.getPayments = asyncHandler(async (req, res) => {
     .limit(Number(limit));
   const total = await Payment.countDocuments(filter);
   sendSuccess(res, 200, 'Payments retrieved.', { payments, total });
+});
+
+exports.confirmPayment = asyncHandler(async (req, res, next) => {
+  const { adminNotes } = req.body;
+  const payment = await Payment.findById(req.params.id);
+  if (!payment) return next(new AppError('Payment not found.', 404));
+  if (payment.status === 'success') return next(new AppError('Payment is already confirmed.', 400));
+
+  payment.status     = 'success';
+  if (adminNotes) payment.adminNotes = adminNotes;
+  await payment.save();
+
+  // Confirm the related service record
+  if (payment.type === 'consultation' && payment.serviceRef) {
+    const appt = await Appointment.findByIdAndUpdate(
+      payment.serviceRef,
+      { paymentRef: payment._id, status: 'confirmed' },
+      { new: true }
+    );
+    if (appt) {
+      const Availability = require('../models/Availability');
+      const scheduledDate = new Date(appt.scheduledAt);
+      const slotTime = `${String(scheduledDate.getHours()).padStart(2, '0')}:${String(scheduledDate.getMinutes()).padStart(2, '0')}`;
+      await Availability.findOneAndUpdate(
+        { doctor: appt.doctor, isActive: true, 'slots.startTime': slotTime },
+        { $set: { 'slots.$.isBooked': true } }
+      );
+    }
+  }
+  if (payment.type === 'pharmacy' && payment.serviceRef) {
+    await PharmacyOrder.findByIdAndUpdate(payment.serviceRef, { paymentRef: payment._id, status: 'processing' });
+  }
+  if (payment.type === 'lab_test' && payment.serviceRef) {
+    await DiagnosticsRequest.findByIdAndUpdate(payment.serviceRef, { paymentRef: payment._id, status: 'assigned' });
+  }
+
+  const typeLabels = { consultation: 'Doctor Appointment', pharmacy: 'Pharmacy Order', lab_test: 'Lab Test', subscription: 'Subscription' };
+  // Notify the user
+  await createNotification({
+    userId: payment.user,
+    type: 'payment_success',
+    title: 'Payment Confirmed',
+    message: `Your bank transfer of ₦${(payment.amount / 100).toLocaleString()} has been confirmed by admin.`,
+    metadata: { paymentId: payment._id },
+    emailData: {
+      amount: payment.amount / 100,
+      description: typeLabels[payment.type] || payment.type,
+    },
+  });
+
+  sendSuccess(res, 200, 'Payment confirmed.', { payment });
 });
 
 exports.getPayouts = asyncHandler(async (req, res) => {
