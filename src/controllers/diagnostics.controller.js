@@ -66,6 +66,19 @@ exports.getLabProfile = asyncHandler(async (req, res, next) => {
   sendSuccess(res, 200, 'Lab profile retrieved.', { lab });
 });
 
+exports.updateLabProfile = asyncHandler(async (req, res, next) => {
+  const { name, address, phone, bankAccount } = req.body;
+  const update = {};
+  if (name) update.name = name;
+  if (address) update.address = address;
+  if (phone) update.phone = phone;
+  if (bankAccount && typeof bankAccount === 'object') update.bankAccount = bankAccount;
+
+  const lab = await LabPartner.findOneAndUpdate({ user: req.user._id }, update, { new: true, runValidators: true });
+  if (!lab) return next(new AppError('Lab partner record not found.', 404));
+  sendSuccess(res, 200, 'Lab profile updated.', { lab });
+});
+
 exports.updateLabTests = asyncHandler(async (req, res, next) => {
   const { testsOffered } = req.body;
   if (!Array.isArray(testsOffered)) return next(new AppError('testsOffered must be an array.', 400));
@@ -350,6 +363,66 @@ exports.updateLabRequestStatus = asyncHandler(async (req, res, next) => {
   }
 
   sendSuccess(res, 200, 'Request status updated.', { request });
+});
+
+exports.getLabEarnings = asyncHandler(async (req, res) => {
+  const PartnerEarning = require('../models/PartnerEarning');
+  const earnings = await PartnerEarning.find({ partner: req.user._id, partnerType: 'lab' }).sort({ createdAt: -1 });
+  const totals = earnings.reduce(
+    (acc, e) => {
+      acc.gross   += e.grossAmount;
+      acc.net     += e.netAmount;
+      acc.pending += e.payoutStatus === 'pending' ? e.netAmount : 0;
+      return acc;
+    },
+    { gross: 0, net: 0, pending: 0 }
+  );
+  sendSuccess(res, 200, 'Earnings retrieved.', { earnings, totals });
+});
+
+exports.requestLabPayout = asyncHandler(async (req, res, next) => {
+  const PartnerEarning = require('../models/PartnerEarning');
+  const PayoutRequest  = require('../models/PayoutRequest');
+
+  const pending = await PartnerEarning.find({ partner: req.user._id, partnerType: 'lab', payoutStatus: 'pending' });
+  if (!pending.length) return next(new AppError('No pending earnings to pay out.', 400));
+
+  const lab        = await LabPartner.findOne({ user: req.user._id }).lean();
+  const bankAccount = lab?.bankAccount || {};
+  const ids         = pending.map(e => e._id);
+  const totalGross  = Math.round(pending.reduce((s, e) => s + e.grossAmount, 0) * 100) / 100;
+  const totalNet    = Math.round(pending.reduce((s, e) => s + e.netAmount,   0) * 100) / 100;
+
+  let request = await PayoutRequest.findOne({ partner: req.user._id, status: 'requested' });
+  if (request) {
+    request.earningIds.push(...ids);
+    request.totalGross = Math.round((request.totalGross + totalGross) * 100) / 100;
+    request.totalNet   = Math.round((request.totalNet   + totalNet)   * 100) / 100;
+    if (bankAccount.accountNumber) request.bankAccount = bankAccount;
+    await request.save();
+  } else {
+    request = await PayoutRequest.create({
+      partner: req.user._id,
+      partnerType: 'lab',
+      partnerName: lab?.name || req.user.name,
+      earningIds: ids,
+      totalGross,
+      totalNet,
+      bankAccount,
+      requestedAt: new Date(),
+    });
+  }
+
+  await PartnerEarning.updateMany({ _id: { $in: ids } }, { payoutStatus: 'requested', payoutRequestedAt: new Date() });
+
+  notifyAdmins({
+    type: 'payout_requested',
+    title: 'Lab Payout Request',
+    message: `${req.user.name} (lab) requested a payout of ₦${totalNet.toLocaleString('en-NG')}.`,
+    metadata: { partnerId: req.user._id, amount: totalNet, partnerType: 'lab' },
+  }).catch(() => {});
+
+  sendSuccess(res, 200, 'Payout requested.', { totalRequested: totalNet, count: pending.length });
 });
 
 exports.getAgentSchedule = asyncHandler(async (req, res) => {

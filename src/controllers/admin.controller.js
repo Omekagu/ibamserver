@@ -11,6 +11,7 @@ const PharmacyOrder = require('../models/PharmacyOrder');
 const Payment = require('../models/Payment');
 const Subscription = require('../models/Subscription');
 const DoctorEarning = require('../models/DoctorEarning');
+const PartnerEarning = require('../models/PartnerEarning');
 const LabPartner = require('../models/LabPartner');
 const PharmacyPartner = require('../models/PharmacyPartner');
 const AuditLog = require('../models/AuditLog');
@@ -19,7 +20,34 @@ const PlatformSettings = require('../models/PlatformSettings');
 const SubscriptionPlan = require('../models/SubscriptionPlan');
 const { createNotification } = require('../services/notification.service');
 const { sendPushNotifications } = require('../services/push.service');
-const { sendBroadcastEmail, sendAdminAlertEmail, sendAccountCreatedEmail } = require('../services/email.service');
+const { sendBroadcastEmail, sendAdminAlertEmail, sendAccountCreatedEmail, sendOTPEmail } = require('../services/email.service');
+const { createTransferRecipient, initiateTransfer } = require('../services/paystack.service');
+const crypto = require('crypto');
+
+// Silently attempt Paystack auto-payout for partner earnings on manual confirm
+async function tryAutoPartnerPayout (earning, partnerType) {
+  try {
+    const settings = await PlatformSettings.findOne().lean();
+    if (!settings?.paystackEnabled) return;
+    const key = settings.paystackSecretKey || process.env.PAYSTACK_SECRET_KEY;
+    if (!key) return;
+    const Profile = partnerType === 'pharmacy' ? PharmacyPartner : LabPartner;
+    const profile = await Profile.findOne({ user: earning.partner }).lean();
+    const bank = profile?.bankAccount;
+    if (!bank?.accountNumber || !bank?.bankCode) return;
+    const recipient = await createTransferRecipient({
+      name: bank.accountName || earning.partnerName || 'Partner',
+      accountNumber: bank.accountNumber,
+      bankCode: bank.bankCode,
+    });
+    await initiateTransfer({
+      amount: earning.netAmount,
+      recipient: recipient.recipient_code,
+      reason: `iBam Health payout – ${earning.partnerName || partnerType}`,
+    });
+    await PartnerEarning.findByIdAndUpdate(earning._id, { payoutStatus: 'paid', paidAt: new Date() });
+  } catch { /* non-fatal */ }
+}
 const { sendSuccess } = require('../utils/response');
 const AppError = require('../utils/AppError');
 const asyncHandler = require('../utils/asyncHandler');
@@ -108,6 +136,24 @@ exports.getUsers = asyncHandler(async (req, res) => {
   sendSuccess(res, 200, 'Users retrieved.', { users, total });
 });
 
+exports.getUserProfile = asyncHandler(async (req, res, next) => {
+  const user = await User.findById(req.params.id).lean();
+  if (!user) return next(new AppError('User not found.', 404));
+
+  let profile = null;
+  if (user.role === 'doctor') {
+    profile = await Doctor.findOne({ user: user._id })
+      .populate('user', 'name email phone')
+      .lean();
+  } else if (user.role === 'pharmacy_partner') {
+    profile = await PharmacyPartner.findOne({ user: user._id }).lean();
+  } else if (user.role === 'lab_partner') {
+    profile = await LabPartner.findOne({ user: user._id }).lean();
+  }
+
+  sendSuccess(res, 200, 'User profile retrieved.', { user, profile });
+});
+
 exports.suspendUser = asyncHandler(async (req, res, next) => {
   const { isActive } = req.body;
   const user = await User.findByIdAndUpdate(req.params.id, { isActive: isActive ?? false }, { new: true });
@@ -176,10 +222,46 @@ exports.confirmPayment = asyncHandler(async (req, res, next) => {
     }
   }
   if (payment.type === 'pharmacy' && payment.serviceRef) {
-    await PharmacyOrder.findByIdAndUpdate(payment.serviceRef, { paymentRef: payment._id, status: 'processing' });
+    const order = await PharmacyOrder.findByIdAndUpdate(
+      payment.serviceRef,
+      { paymentRef: payment._id, status: 'processing' },
+      { new: true }
+    ).populate('pharmacy', 'user name');
+    if (order?.pharmacy?.user) {
+      const gross = payment.amount / 100;
+      const cut   = Math.round(gross * 0.1 * 100) / 100;
+      const earning = await PartnerEarning.create({
+        partner:     order.pharmacy.user,
+        partnerType: 'pharmacy',
+        partnerName: order.pharmacy.name,
+        serviceRef:  payment.serviceRef,
+        grossAmount: gross,
+        platformCut: cut,
+        netAmount:   gross - cut,
+      });
+      tryAutoPartnerPayout(earning, 'pharmacy');
+    }
   }
   if (payment.type === 'lab_test' && payment.serviceRef) {
-    await DiagnosticsRequest.findByIdAndUpdate(payment.serviceRef, { paymentRef: payment._id, status: 'assigned' });
+    const diagReq = await DiagnosticsRequest.findByIdAndUpdate(
+      payment.serviceRef,
+      { paymentRef: payment._id, status: 'assigned' },
+      { new: true }
+    ).populate('lab', 'user name');
+    if (diagReq?.lab?.user) {
+      const gross = payment.amount / 100;
+      const cut   = Math.round(gross * 0.1 * 100) / 100;
+      const earning = await PartnerEarning.create({
+        partner:     diagReq.lab.user,
+        partnerType: 'lab',
+        partnerName: diagReq.lab.name,
+        serviceRef:  payment.serviceRef,
+        grossAmount: gross,
+        platformCut: cut,
+        netAmount:   gross - cut,
+      });
+      tryAutoPartnerPayout(earning, 'lab');
+    }
   }
 
   const typeLabels = { consultation: 'Doctor Appointment', pharmacy: 'Pharmacy Order', lab_test: 'Lab Test', subscription: 'Subscription' };
@@ -200,38 +282,137 @@ exports.confirmPayment = asyncHandler(async (req, res, next) => {
 });
 
 exports.getPayouts = asyncHandler(async (req, res) => {
-  const { status, page = 1, limit = 20 } = req.query;
-  const filter = {};
-  if (status) filter.payoutStatus = status;
+  const PayoutRequest = require('../models/PayoutRequest');
+  const { status, type } = req.query;
+  const results = [];
 
-  const earnings = await DoctorEarning.find(filter)
-    .populate('doctor', 'name email')
-    .sort({ createdAt: -1 })
-    .skip((page - 1) * limit)
-    .limit(Number(limit));
-  sendSuccess(res, 200, 'Payouts retrieved.', { earnings });
+  // Doctor earnings (individual records, still using DoctorEarning)
+  if (!type || type === 'doctor') {
+    const filter = {};
+    if (status) filter.payoutStatus = status;
+    const docs = await DoctorEarning.find(filter)
+      .populate('doctor', 'name email')
+      .populate({ path: 'doctor', populate: { path: 'doctor', model: 'Doctor', select: 'bankAccount' } })
+      .sort({ createdAt: -1 });
+    const doctorProfiles = await Doctor.find({ user: { $in: docs.map(d => d.doctor?._id).filter(Boolean) } }).lean();
+    const bankMap = {};
+    doctorProfiles.forEach(p => { bankMap[String(p.user)] = p.bankAccount; });
+    docs.forEach(e => {
+      results.push({
+        _id: e._id,
+        partnerType: 'doctor',
+        partnerName: e.doctor?.name,
+        partnerEmail: e.doctor?.email,
+        totalGross: e.grossAmount,
+        platformCut: e.platformCut,
+        totalNet: e.netAmount,
+        bankAccount: bankMap[String(e.doctor?._id)] || null,
+        payoutStatus: e.payoutStatus,
+        requestedAt: e.payoutRequestedAt,
+        paidAt: e.paidAt,
+        createdAt: e.createdAt,
+        isDoctor: true,
+      });
+    });
+  }
+
+  // Pharmacy & lab — use consolidated PayoutRequests
+  if (!type || type === 'pharmacy' || type === 'lab') {
+    const filter = {};
+    if (status) filter.status = status;
+    if (type === 'pharmacy') filter.partnerType = 'pharmacy';
+    else if (type === 'lab') filter.partnerType = 'lab';
+    const requests = await PayoutRequest.find(filter)
+      .populate('partner', 'name email')
+      .sort({ requestedAt: -1 });
+    requests.forEach(r => {
+      results.push({
+        _id: r._id,
+        partnerType: r.partnerType,
+        partnerName: r.partnerName || r.partner?.name,
+        partnerEmail: r.partner?.email,
+        totalGross: r.totalGross,
+        platformCut: Math.round((r.totalGross - r.totalNet) * 100) / 100,
+        totalNet: r.totalNet,
+        bankAccount: r.bankAccount,
+        payoutStatus: r.status,
+        requestedAt: r.requestedAt,
+        paidAt: r.processedAt,
+        createdAt: r.requestedAt,
+        isDoctor: false,
+        earningCount: r.earningIds?.length ?? 0,
+      });
+    });
+  }
+
+  results.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  sendSuccess(res, 200, 'Payouts retrieved.', { earnings: results });
 });
 
 exports.approvePayout = asyncHandler(async (req, res, next) => {
-  const earning = await DoctorEarning.findById(req.params.id);
-  if (!earning) return next(new AppError('Earning record not found.', 404));
-  if (earning.payoutStatus !== 'requested') {
-    return next(new AppError('Payout not in requested state.', 400));
+  const PayoutRequest = require('../models/PayoutRequest');
+
+  // Try DoctorEarning first
+  const doctorEarning = await DoctorEarning.findById(req.params.id);
+  if (doctorEarning) {
+    if (doctorEarning.payoutStatus !== 'requested') return next(new AppError('Payout not in requested state.', 400));
+    doctorEarning.payoutStatus = 'paid';
+    doctorEarning.paidAt = new Date();
+    await doctorEarning.save();
+    await createNotification({
+      userId: doctorEarning.doctor,
+      type: 'payout_processed',
+      title: 'Payout Processed',
+      message: `Your payout of ₦${doctorEarning.netAmount.toLocaleString('en-NG')} has been processed.`,
+    });
+    return sendSuccess(res, 200, 'Payout approved.', { earning: doctorEarning });
   }
 
-  earning.payoutStatus = 'paid';
-  earning.paidAt = new Date();
-  await earning.save();
+  // Partner payout request (consolidated)
+  const request = await PayoutRequest.findById(req.params.id);
+  if (!request) return next(new AppError('Payout request not found.', 404));
+  if (request.status !== 'requested') return next(new AppError('Payout not in requested state.', 400));
+
+  // Try Paystack auto-transfer
+  let transferred = false;
+  const bank = request.bankAccount;
+  if (bank?.accountNumber && bank?.bankCode) {
+    try {
+      const settings = await PlatformSettings.findOne().lean();
+      const key = settings?.paystackSecretKey || process.env.PAYSTACK_SECRET_KEY;
+      if (settings?.paystackEnabled && key) {
+        const recipient = await createTransferRecipient({
+          name: bank.accountName || request.partnerName || 'Partner',
+          accountNumber: bank.accountNumber,
+          bankCode: bank.bankCode,
+        });
+        await initiateTransfer({
+          amount: request.totalNet,
+          recipient: recipient.recipient_code,
+          reason: `iBam Health payout – ${request.partnerName}`,
+        });
+        transferred = true;
+      }
+    } catch { /* fall through to manual */ }
+  }
+
+  request.status = 'paid';
+  request.processedAt = new Date();
+  await request.save();
+
+  await PartnerEarning.updateMany(
+    { _id: { $in: request.earningIds } },
+    { payoutStatus: 'paid', paidAt: new Date() }
+  );
 
   await createNotification({
-    userId: earning.doctor,
+    userId: request.partner,
     type: 'payout_processed',
     title: 'Payout Processed',
-    message: `Your payout of ₦${earning.netAmount} has been processed.`,
-    emailData: { amount: earning.netAmount },
+    message: `Your payout of ₦${request.totalNet.toLocaleString('en-NG')} has been ${transferred ? 'transferred to your bank account' : 'processed'}.`,
   });
 
-  sendSuccess(res, 200, 'Payout approved.', { earning });
+  sendSuccess(res, 200, 'Payout approved.', { transferred });
 });
 
 exports.getPartners = asyncHandler(async (req, res) => {
@@ -497,19 +678,54 @@ exports.getPublicContent = asyncHandler(async (req, res) => {
 });
 
 exports.getSettings = asyncHandler(async (req, res) => {
-  let settings = await PlatformSettings.findOne();
+  let settings = await PlatformSettings.findOne().lean();
   if (!settings) settings = await PlatformSettings.create({});
-  sendSuccess(res, 200, 'Settings retrieved.', { settings });
+  // Never expose secret key to client — send a flag instead
+  const out = { ...settings, paystackSecretKey: undefined, paystackKeySet: !!(settings.paystackSecretKey) };
+  sendSuccess(res, 200, 'Settings retrieved.', { settings: out });
 });
 
-exports.updateSettings = asyncHandler(async (req, res) => {
+exports.requestSettingsOtp = asyncHandler(async (req, res) => {
+  const otp = String(Math.floor(100000 + Math.random() * 900000));
+  const hash = crypto.createHash('sha256').update(otp).digest('hex');
+  const expiry = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+  await PlatformSettings.findOneAndUpdate(
+    {},
+    { settingsOtpHash: hash, settingsOtpExpiry: expiry },
+    { upsert: true }
+  );
+
+  await sendOTPEmail(req.user.email, otp);
+  sendSuccess(res, 200, 'OTP sent to your admin email.');
+});
+
+exports.updateSettings = asyncHandler(async (req, res, next) => {
   const {
-    paystackEnabled,
+    paystackEnabled, paystackSecretKey, paystackPublicKey, otp,
     directPaymentEnabled, companyBankName, companyAccountNumber, companyAccountName, companyBankCode, directPaymentNote,
     announcement, healthTips,
   } = req.body;
+
+  // OTP required when changing API keys
+  if (paystackSecretKey !== undefined || paystackPublicKey !== undefined) {
+    const current = await PlatformSettings.findOne().select('+settingsOtpHash +settingsOtpExpiry').lean();
+    const currentHasKey = !!(current?.paystackSecretKey);
+
+    if (currentHasKey) {
+      if (!otp) return next(new AppError('OTP required to update API keys.', 403));
+      if (!current.settingsOtpHash || !current.settingsOtpExpiry || current.settingsOtpExpiry < new Date())
+        return next(new AppError('OTP expired. Please request a new one.', 403));
+      const hash = crypto.createHash('sha256').update(String(otp)).digest('hex');
+      if (hash !== current.settingsOtpHash)
+        return next(new AppError('Invalid OTP.', 403));
+    }
+  }
+
   const update = {};
   if (typeof paystackEnabled       === 'boolean') update.paystackEnabled       = paystackEnabled;
+  if (paystackSecretKey            !== undefined) update.paystackSecretKey     = paystackSecretKey;
+  if (paystackPublicKey            !== undefined) update.paystackPublicKey     = paystackPublicKey;
   if (typeof directPaymentEnabled  === 'boolean') update.directPaymentEnabled  = directPaymentEnabled;
   if (companyBankName      !== undefined) update.companyBankName      = companyBankName;
   if (companyAccountNumber !== undefined) update.companyAccountNumber = companyAccountNumber;
@@ -519,8 +735,12 @@ exports.updateSettings = asyncHandler(async (req, res) => {
   if (announcement         !== undefined) update.announcement         = announcement;
   if (Array.isArray(healthTips))          update.healthTips           = healthTips;
 
-  const settings = await PlatformSettings.findOneAndUpdate({}, update, { upsert: true, new: true });
-  sendSuccess(res, 200, 'Settings updated.', { settings });
+  // Clear OTP after use
+  if (otp) { update.settingsOtpHash = null; update.settingsOtpExpiry = null; }
+
+  const settings = await PlatformSettings.findOneAndUpdate({}, update, { upsert: true, new: true }).lean();
+  const out = { ...settings, paystackSecretKey: undefined, paystackKeySet: !!(settings.paystackSecretKey) };
+  sendSuccess(res, 200, 'Settings updated.', { settings: out });
 });
 
 // ─── Plan management ─────────────────────────────────────

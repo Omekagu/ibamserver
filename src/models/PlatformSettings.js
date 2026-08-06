@@ -3,8 +3,14 @@ const mongoose = require('mongoose');
 // Singleton document — only one settings record ever exists
 const platformSettingsSchema = new mongoose.Schema(
   {
-    // Paystack toggle (keys stay in .env; this flag gates the payment option)
+    // Paystack toggle and API keys (keys stored encrypted in DB; env fallback)
     paystackEnabled:      { type: Boolean, default: true },
+    paystackSecretKey:    { type: String, default: '' },
+    paystackPublicKey:    { type: String, default: '' },
+
+    // OTP for unlocking payment key changes
+    settingsOtpHash:   { type: String, select: false },
+    settingsOtpExpiry: { type: Date },
 
     // Direct company bank transfer toggle
     directPaymentEnabled: { type: Boolean, default: false },

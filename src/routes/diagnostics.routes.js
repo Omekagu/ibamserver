@@ -10,8 +10,11 @@ router.use(protect);
 
 router.get('/labs', ctrl.listLabs);
 router.get('/labs/profile', restrictTo('lab_partner'), ctrl.getLabProfile);
+router.put('/labs/profile', restrictTo('lab_partner'), ctrl.updateLabProfile);
 router.put('/labs/tests', restrictTo('lab_partner'), ctrl.updateLabTests);
 router.get('/labs/requests', restrictTo('lab_partner'), ctrl.getLabRequests);
+router.get('/labs/earnings', restrictTo('lab_partner'), ctrl.getLabEarnings);
+router.post('/labs/earnings/request-payout', restrictTo('lab_partner'), ctrl.requestLabPayout);
 router.put('/labs/requests/:id/status', restrictTo('lab_partner'), ctrl.updateLabRequestStatus);
 
 router.post('/request', upload.single('referral'), ctrl.requestTests);

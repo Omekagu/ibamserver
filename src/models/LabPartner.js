@@ -27,6 +27,12 @@ const labPartnerSchema = new mongoose.Schema(
     cacVerified: { type: Boolean, default: false },
     cacRegisteredName: { type: String },
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    bankAccount: {
+      bankName:      { type: String },
+      accountNumber: { type: String },
+      accountName:   { type: String },
+      bankCode:      { type: String },
+    },
   },
   { timestamps: true }
 );

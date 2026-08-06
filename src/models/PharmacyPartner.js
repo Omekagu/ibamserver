@@ -7,7 +7,7 @@ const drugSchema = new mongoose.Schema(
     unit: { type: String, default: 'pack' },
     requiresPrescription: { type: Boolean, default: false },
     inStock: { type: Boolean, default: true },
-    adminApproved: { type: Boolean, default: false },
+    adminApproved: { type: Boolean, default: true },
   },
   { _id: true }
 );

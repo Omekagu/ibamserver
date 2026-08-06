@@ -262,7 +262,7 @@ const sendPharmacyOrderUpdateEmail = ({ email, name, status, pharmacyName, items
       ${para(`Hi ${name}, your order from <strong>${pharmacyName}</strong> is now: <strong>${label}</strong>.`)}
       ${items?.length ? `
         <div style="background:#F8FAFC;border-radius:10px;padding:16px 20px;margin:16px 0">
-          ${items.map(i => info(i.name, `×${i.quantity}`)).join('')}
+          ${items.map(i => info(i.name, `×${i.qty ?? i.quantity ?? 1}`)).join('')}
         </div>` : ''}
       ${btn(`${APP_URL}/patient/pharmacy`, 'Track Order')}
     `),

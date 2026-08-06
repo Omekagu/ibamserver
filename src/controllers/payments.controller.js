@@ -4,11 +4,42 @@ const Appointment = require('../models/Appointment');
 const Availability = require('../models/Availability');
 const PharmacyOrder = require('../models/PharmacyOrder');
 const DiagnosticsRequest = require('../models/DiagnosticsRequest');
-const { initializeTransaction, verifyTransaction } = require('../services/paystack.service');
+const PartnerEarning = require('../models/PartnerEarning');
+const { initializeTransaction, verifyTransaction, createTransferRecipient, initiateTransfer } = require('../services/paystack.service');
+const PlatformSettings = require('../models/PlatformSettings');
+const PharmacyPartner = require('../models/PharmacyPartner');
+const LabPartner = require('../models/LabPartner');
 const { createNotification } = require('../services/notification.service');
 const { sendSuccess } = require('../utils/response');
 const AppError = require('../utils/AppError');
 const asyncHandler = require('../utils/asyncHandler');
+
+// Attempt Paystack auto-payout for a partner earning; silently swallows errors.
+async function tryAutoPartnerPayout (earning) {
+  try {
+    const settings = await PlatformSettings.findOne().lean();
+    if (!settings?.paystackEnabled) return;
+    const key = settings.paystackSecretKey || process.env.PAYSTACK_SECRET_KEY;
+    if (!key) return;
+
+    const Profile = earning.partnerType === 'pharmacy' ? PharmacyPartner : LabPartner;
+    const profile = await Profile.findOne({ user: earning.partner }).lean();
+    const bank = profile?.bankAccount;
+    if (!bank?.accountNumber || !bank?.bankCode) return;
+
+    const recipient = await createTransferRecipient({
+      name: bank.accountName || earning.partnerName || 'Partner',
+      accountNumber: bank.accountNumber,
+      bankCode: bank.bankCode,
+    });
+    await initiateTransfer({
+      amount: earning.netAmount,
+      recipient: recipient.recipient_code,
+      reason: `iBam Health payout – ${earning.partnerName || earning.partnerType}`,
+    });
+    await PartnerEarning.findByIdAndUpdate(earning._id, { payoutStatus: 'paid', paidAt: new Date() });
+  } catch { /* non-fatal — leave earning as pending */ }
+}
 
 exports.initiate = asyncHandler(async (req, res, next) => {
   const { type, serviceId, referenceId, amount } = req.body;
@@ -72,10 +103,36 @@ exports.verify = asyncHandler(async (req, res, next) => {
       }
     }
     if (payment.type === 'pharmacy' && payment.serviceRef) {
-      await PharmacyOrder.findByIdAndUpdate(payment.serviceRef, { paymentRef: payment._id, status: 'processing' });
+      const order = await PharmacyOrder.findByIdAndUpdate(
+        payment.serviceRef,
+        { paymentRef: payment._id, status: 'processing' },
+        { new: true }
+      ).populate('pharmacy', 'user name');
+      if (order?.pharmacy?.user) {
+        const gross = payment.amount / 100;
+        const cut   = Math.round(gross * 0.1 * 100) / 100;
+        const earning = await PartnerEarning.create({
+          partner: order.pharmacy.user, partnerType: 'pharmacy', partnerName: order.pharmacy.name,
+          serviceRef: payment.serviceRef, grossAmount: gross, platformCut: cut, netAmount: gross - cut,
+        });
+        tryAutoPartnerPayout(earning);
+      }
     }
     if (payment.type === 'lab_test' && payment.serviceRef) {
-      await DiagnosticsRequest.findByIdAndUpdate(payment.serviceRef, { paymentRef: payment._id });
+      const diagReq = await DiagnosticsRequest.findByIdAndUpdate(
+        payment.serviceRef,
+        { paymentRef: payment._id },
+        { new: true }
+      ).populate('lab', 'user name');
+      if (diagReq?.lab?.user) {
+        const gross = payment.amount / 100;
+        const cut   = Math.round(gross * 0.1 * 100) / 100;
+        const earning = await PartnerEarning.create({
+          partner: diagReq.lab.user, partnerType: 'lab', partnerName: diagReq.lab.name,
+          serviceRef: payment.serviceRef, grossAmount: gross, platformCut: cut, netAmount: gross - cut,
+        });
+        tryAutoPartnerPayout(earning);
+      }
     }
 
     const typeLabels = { consultation: 'Doctor Appointment', pharmacy: 'Pharmacy Order', lab_test: 'Lab Test', subscription: 'Subscription' };

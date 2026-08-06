@@ -85,18 +85,18 @@ exports.updateCatalog = asyncHandler(async (req, res, next) => {
     unit: d.unit || 'pack',
     requiresPrescription: Boolean(d.requiresPrescription),
     inStock: d.inStock !== false,
-    adminApproved: partner.drugsOffered.find(e => String(e._id) === String(d._id))?.adminApproved ?? false,
+    adminApproved: true,
   }));
 
   partner.drugsOffered = formatted;
   await partner.save();
-  sendSuccess(res, 200, 'Drug catalog updated. New drugs are pending admin approval.', { drugs: partner.drugsOffered });
+  sendSuccess(res, 200, 'Drug catalog updated.', { drugs: partner.drugsOffered });
 });
 
 exports.getPublicCatalog = asyncHandler(async (req, res, next) => {
   const partner = await PharmacyPartner.findById(req.params.id).select('name address phone drugsOffered status');
   if (!partner || partner.status !== 'active') return next(new AppError('Pharmacy not found.', 404));
-  const approvedDrugs = partner.drugsOffered.filter(d => d.adminApproved && d.inStock);
+  const approvedDrugs = partner.drugsOffered.filter(d => d.inStock);
   sendSuccess(res, 200, 'Catalog retrieved.', { partner, drugs: approvedDrugs });
 });
 
@@ -194,7 +194,7 @@ exports.placeDirectOrder = asyncHandler(async (req, res, next) => {
 
   for (const item of items) {
     const catalogDrug = pharmacy.drugsOffered.find(
-      d => d.adminApproved && String(d._id) === String(item.drugId)
+      d => String(d._id) === String(item.drugId)
     );
     if (!catalogDrug) return next(new AppError(`Drug not found in pharmacy catalog: ${item.name}`, 400));
     if (!catalogDrug.inStock) return next(new AppError(`${catalogDrug.name} is currently out of stock.`, 400));
@@ -354,4 +354,65 @@ exports.getPartnerOrders = asyncHandler(async (req, res) => {
     .populate('prescription')
     .sort({ createdAt: -1 });
   sendSuccess(res, 200, 'Partner orders retrieved.', { orders });
+});
+
+exports.getPharmacyEarnings = asyncHandler(async (req, res) => {
+  const PartnerEarning = require('../models/PartnerEarning');
+  const earnings = await PartnerEarning.find({ partner: req.user._id, partnerType: 'pharmacy' }).sort({ createdAt: -1 });
+  const totals = earnings.reduce(
+    (acc, e) => {
+      acc.gross += e.grossAmount;
+      acc.net   += e.netAmount;
+      acc.pending += e.payoutStatus === 'pending' ? e.netAmount : 0;
+      return acc;
+    },
+    { gross: 0, net: 0, pending: 0 }
+  );
+  sendSuccess(res, 200, 'Earnings retrieved.', { earnings, totals });
+});
+
+exports.requestPharmacyPayout = asyncHandler(async (req, res, next) => {
+  const PartnerEarning = require('../models/PartnerEarning');
+  const PayoutRequest  = require('../models/PayoutRequest');
+
+  const pending = await PartnerEarning.find({ partner: req.user._id, partnerType: 'pharmacy', payoutStatus: 'pending' });
+  if (!pending.length) return next(new AppError('No pending earnings to pay out.', 400));
+
+  const pharmacy = await PharmacyPartner.findOne({ user: req.user._id }).lean();
+  const bankAccount  = pharmacy?.bankAccount || {};
+  const ids          = pending.map(e => e._id);
+  const totalGross   = Math.round(pending.reduce((s, e) => s + e.grossAmount, 0) * 100) / 100;
+  const totalNet     = Math.round(pending.reduce((s, e) => s + e.netAmount,   0) * 100) / 100;
+
+  // Merge into existing open request for this partner, or create a new one
+  let request = await PayoutRequest.findOne({ partner: req.user._id, status: 'requested' });
+  if (request) {
+    request.earningIds.push(...ids);
+    request.totalGross = Math.round((request.totalGross + totalGross) * 100) / 100;
+    request.totalNet   = Math.round((request.totalNet   + totalNet)   * 100) / 100;
+    if (bankAccount.accountNumber) request.bankAccount = bankAccount;
+    await request.save();
+  } else {
+    request = await PayoutRequest.create({
+      partner: req.user._id,
+      partnerType: 'pharmacy',
+      partnerName: pharmacy?.name || req.user.name,
+      earningIds: ids,
+      totalGross,
+      totalNet,
+      bankAccount,
+      requestedAt: new Date(),
+    });
+  }
+
+  await PartnerEarning.updateMany({ _id: { $in: ids } }, { payoutStatus: 'requested', payoutRequestedAt: new Date() });
+
+  notifyAdmins({
+    type: 'payout_requested',
+    title: 'Pharmacy Payout Request',
+    message: `${req.user.name} (pharmacy) requested a payout of ₦${totalNet.toLocaleString('en-NG')}.`,
+    metadata: { partnerId: req.user._id, amount: totalNet, partnerType: 'pharmacy' },
+  }).catch(() => {});
+
+  sendSuccess(res, 200, 'Payout requested.', { totalRequested: totalNet, count: pending.length });
 });

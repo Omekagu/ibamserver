@@ -19,6 +19,8 @@ router.post('/order', restrictTo('patient'), ctrl.placeOrder);
 router.post('/order/direct', restrictTo('patient'), upload.single('prescription'), ctrl.placeDirectOrder);
 router.get('/orders/mine', restrictTo('patient'), ctrl.getMyOrders);
 router.get('/orders/partner', restrictTo('pharmacy_partner'), ctrl.getPartnerOrders);
+router.get('/earnings', restrictTo('pharmacy_partner'), ctrl.getPharmacyEarnings);
+router.post('/earnings/request-payout', restrictTo('pharmacy_partner'), ctrl.requestPharmacyPayout);
 router.put('/order/:id/status', restrictTo('pharmacy_partner', 'admin'), ctrl.updateOrderStatus);
 
 module.exports = router;

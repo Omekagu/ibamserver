@@ -16,6 +16,7 @@ router.post('/doctors', audit('create_doctor', 'Doctor'), ctrl.createDoctor);
 router.put('/doctors/:id/approve', audit('approve_doctor', 'Doctor'), ctrl.approveDoctor);
 router.put('/kyc/:userId/verify', audit('manual_kyc_verify', 'User'), ctrl.manualKycVerify);
 router.get('/users', ctrl.getUsers);
+router.get('/users/:id/profile', ctrl.getUserProfile);
 router.put('/users/:id/suspend', audit('suspend_user', 'User'), ctrl.suspendUser);
 router.get('/appointments', ctrl.getAppointments);
 router.get('/payments', ctrl.getPayments);
@@ -62,6 +63,7 @@ router.put('/approvals/test/:id', audit('approve_test', 'DiagnosticsRequest'), c
 
 // Platform settings
 router.get('/settings', ctrl.getSettings);
+router.post('/settings/request-otp', ctrl.requestSettingsOtp);
 router.put('/settings', audit('update_settings', 'PlatformSettings'), ctrl.updateSettings);
 
 // Subscription plan management
