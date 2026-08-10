@@ -3,7 +3,8 @@
 > Platform URL: **https://www.ibamhealth.com**  
 > API: **https://api.ibamhealth.com**  
 > Mobile APK: sideload or Play Store once published  
-> Six roles: **Patient · Doctor · Pharmacy Partner · Lab Partner · Field Agent · Admin**
+> Six roles: **Patient · Doctor · Pharmacy Partner · Lab · Field Agent · Admin**
+> Lab
 
 ---
 
@@ -12,7 +13,7 @@
 1. [Patient Journey](#1-patient-journey)
 2. [Doctor Journey](#2-doctor-journey)
 3. [Pharmacy Partner Journey](#3-pharmacy-partner-journey)
-4. [Lab Partner Journey](#4-lab-partner-journey)
+4. [Lab Journey](#4-lab-partner-journey)
 5. [Field Agent Journey](#5-field-agent-journey)
 6. [Admin Journey](#6-admin-journey)
 7. [Cross-Role Flows](#7-cross-role-flows)
@@ -27,7 +28,7 @@
 2. Tap **Get Started** → **Sign Up**.
 3. Fill in name, email address, phone number, and password. Select role **Patient**.
 4. Submit → receive a 6-digit OTP via email (and SMS if Termii is configured).
-5. Enter OTP on the verification screen.  
+5. Enter OTP on the verification screen.
    - If OTP expires, tap **Resend OTP**.
 6. Account is activated. On first login, optionally complete the **Health Profile** (blood type, allergies, chronic conditions).
 7. Alternatively, tap **Continue with Google** for one-click OAuth sign-in. If the Google account is new, a role-selection step appears before account creation.
@@ -36,12 +37,12 @@
 
 ### 1.2 Login
 
-| Step | Web | Mobile |
-|------|-----|--------|
-| 1 | Go to `/login` | Open app → arrives at auth screen |
-| 2 | Enter email / phone + password | Enter email / phone + password |
-| 3 | Press **Log In** | Press **Log In** |
-| 4 | Redirected to `/patient` dashboard | Redirected to `/(tabs)` home screen |
+| Step | Web                                | Mobile                              |
+| ---- | ---------------------------------- | ----------------------------------- |
+| 1    | Go to `/login`                     | Open app → arrives at auth screen   |
+| 2    | Enter email / phone + password     | Enter email / phone + password      |
+| 3    | Press **Log In**                   | Press **Log In**                    |
+| 4    | Redirected to `/patient` dashboard | Redirected to `/(tabs)` home screen |
 
 - After **5 failed attempts** the account is locked for **15 minutes** (error message shows remaining time).
 - After **2 minutes of inactivity** on mobile, the app auto-signs out (session guard).
@@ -117,7 +118,7 @@ After login the patient lands on the **Home** tab:
 ### 1.7 Receiving & Managing Prescriptions
 
 1. After a consultation the doctor may issue an **e-prescription**.
-2. Patient receives a push notification + email: *"Your prescription is ready."*
+2. Patient receives a push notification + email: _"Your prescription is ready."_
 3. Go to **Records** tab → **Prescriptions** → view full prescription details (medication name, dosage, frequency, duration).
 4. Tap **Forward to Pharmacy** to send directly to a partner pharmacy.
 5. Select the pharmacy from the list → order is created automatically.
@@ -162,6 +163,7 @@ After login the patient lands on the **Home** tab:
 5. Manage / cancel subscription from **Subscriptions** screen or web `/patient/subscriptions`.
 
 **Product Subscriptions (Recurring Drug/Test Deliveries):**
+
 - While placing a pharmacy order or lab test, toggle **Recurring** → set frequency (weekly / monthly).
 - Manage from **Records → Subscriptions**.
 
@@ -169,13 +171,13 @@ After login the patient lands on the **Home** tab:
 
 ### 1.11 Profile & Health Information
 
-| Section | What you can update |
-|---------|---------------------|
-| **Edit Profile** | Name, phone number, profile photo |
-| **Health Profile** | Blood type, genotype, allergies, existing conditions |
-| **Medical History** | Add past diagnoses, surgeries, medications |
-| **KYC** | Upload NIN, complete face match (required for some services) |
-| **Notifications** | View all; tap to mark read or mark all read |
+| Section             | What you can update                                          |
+| ------------------- | ------------------------------------------------------------ |
+| **Edit Profile**    | Name, phone number, profile photo                            |
+| **Health Profile**  | Blood type, genotype, allergies, existing conditions         |
+| **Medical History** | Add past diagnoses, surgeries, medications                   |
+| **KYC**             | Upload NIN, complete face match (required for some services) |
+| **Notifications**   | View all; tap to mark read or mark all read                  |
 
 ---
 
@@ -208,7 +210,7 @@ View all transactions with date, amount, status, and reference number.
 4. Log in → redirected to the **Doctor Portal** (`/doctor`).
 5. Complete **Doctor Profile**: specialization, bio, years of experience, license number, consultation fee.
 6. Upload **medical license** (PDF/image → Cloudinary).
-7. Submit for **Admin KYC review** — account shows *"Pending Verification"* banner until approved.
+7. Submit for **Admin KYC review** — account shows _"Pending Verification"_ banner until approved.
 8. Complete **KYC** (NIN, face match) at `/doctor/kyc` to unlock payout eligibility.
 
 **Mobile:**  
@@ -288,7 +290,7 @@ Same flow — after sign-up with doctor role, the app routes to `/(doctor)` layo
 2. Select the test(s) from the lab catalog.
 3. Choose collection type: walk-in or home visit.
 4. Submit → patient receives notification to complete payment.
-5. Lab partner receives the request once payment is confirmed.
+5. Lab receives the request once payment is confirmed.
 
 ---
 
@@ -337,7 +339,7 @@ Same flow — after sign-up with doctor role, the app routes to `/(doctor)` layo
    - Verify email via OTP.
 2. Log in → redirected to **Partner Portal** at `/partner/pharmacy`.
 3. Complete business profile: pharmacy name, address, contact number, coverage area.
-4. Submit for **Admin approval** (status: *Pending*).
+4. Submit for **Admin approval** (status: _Pending_).
 5. Admin approves → account fully activated; partner receives approval email with portal link.
 
 ---
@@ -389,11 +391,11 @@ Pending → Processing → Ready → Dispatched → Delivered
 
 ---
 
-## 4. Lab Partner Journey
+## 4. Lab Journey
 
 ### 4.1 Onboarding (Web)
 
-1. Register at **https://www.ibamhealth.com/signup** → role **Lab Partner**, or created by Admin.
+1. Register at **https://www.ibamhealth.com/signup** → role \*_Lab _, or created by Admin.
 2. Verify email via OTP.
 3. Complete lab profile: lab name, address, contact, coverage area, accreditation details.
 4. Submit for Admin approval.
@@ -404,7 +406,7 @@ Pending → Processing → Ready → Dispatched → Delivered
 ### 4.2 Login
 
 - Web: `/login` → `/partner/lab`.
-- Mobile: login → `/(partner)` tabs (Lab Partner badge).
+- Mobile: login → `/(partner)` tabs (Lab badge).
 
 ---
 
@@ -433,7 +435,7 @@ Pending → Collected → Processing → Completed
 1. Once processing is complete, open the request.
 2. Tap **Upload Result** → select file (PDF, image).
 3. File uploads to Cloudinary and is linked to the request.
-4. Patient receives push notification + email: *"Your lab results are ready."*
+4. Patient receives push notification + email: _"Your lab results are ready."_
 5. Patient can download/view the result from **Records → Lab Results**.
 
 ---
@@ -460,9 +462,9 @@ Pending → Collected → Processing → Completed
 
 ### 5.1 Onboarding
 
-Field agents are created by the **Lab Partner** or the **Admin**:
+Field agents are created by the **Lab** or the **Admin**:
 
-1. Admin or lab partner creates a field agent account under their lab.
+1. Admin or lab creates a field agent account under their lab.
 2. Agent receives an email with login credentials.
 3. Agent downloads the **mobile app**, logs in.
 4. App detects `role: field_agent` → routes to `/(field_agent)` tab navigator.
@@ -497,11 +499,11 @@ Field agents are created by the **Lab Partner** or the **Admin**:
 3. Collect the sample(s) listed.
 4. Return to the app → find the visit card.
 5. Tap **Mark Sample Collected**.
-6. A confirmation dialog appears: *"Mark sample as collected for [Patient Name]?"*
+6. A confirmation dialog appears: _"Mark sample as collected for [Patient Name]?"_
 7. Tap **Confirm**.
 8. Status updates to **Collected** on the server.
-9. The lab partner sees the update on their dashboard.
-10. Patient receives a notification: *"Your sample has been collected and is being processed."*
+9. The lab sees the update on their dashboard.
+10. Patient receives a notification: _"Your sample has been collected and is being processed."_
 
 ---
 
@@ -532,16 +534,17 @@ Field agents are created by the **Lab Partner** or the **Admin**:
 
 ### 6.3 Doctor Management (`/admin/doctors`)
 
-| Action | How |
-|--------|-----|
-| View all doctors | Paginated table with name, specialization, status |
-| Approve KYC | Click doctor → review uploaded license + NIN/face match → **Approve** or **Reject** |
-| Suspend doctor | Toggle active/suspended |
-| Create doctor manually | **+ Add Doctor** button |
-| View full profile | Click name → see bio, license, consultation history |
+| Action                 | How                                                                                 |
+| ---------------------- | ----------------------------------------------------------------------------------- |
+| View all doctors       | Paginated table with name, specialization, status                                   |
+| Approve KYC            | Click doctor → review uploaded license + NIN/face match → **Approve** or **Reject** |
+| Suspend doctor         | Toggle active/suspended                                                             |
+| Create doctor manually | **+ Add Doctor** button                                                             |
+| View full profile      | Click name → see bio, license, consultation history                                 |
 
 On approval:
-- Doctor receives an email: *"Your account has been verified."*
+
+- Doctor receives an email: _"Your account has been verified."_
 - KYC badge appears on their public profile.
 - Payout feature unlocked.
 
@@ -550,12 +553,14 @@ On approval:
 ### 6.4 Partner Management
 
 **Pharmacies (`/admin/pharmacy`):**
+
 - View all pharmacy partners.
 - Approve / reject pending onboarding applications.
 - Suspend or reactivate accounts.
 - Approved pharmacy receives email with portal link.
 
 **Labs (`/admin/labs`):**
+
 - Same flow as pharmacies.
 - Manage field agent assignments.
 
@@ -674,8 +679,8 @@ Doctor requests lab test OR patient self-requests
         ↓
 Patient selects home visit + pays
         ↓
-Lab partner receives request
-Lab partner assigns field agent
+Lab receives request
+Lab assigns field agent
         ↓
 Patient notified: "Agent will visit on [date/time]"
 Field agent sees visit in schedule
@@ -683,7 +688,7 @@ Field agent sees visit in schedule
 Field agent travels to patient address
 Field agent taps "Mark Sample Collected"
         ↓
-Lab partner sees status = Collected
+Lab sees status = Collected
 Lab processes sample
 Lab uploads result file
         ↓
@@ -752,35 +757,35 @@ Payout marked as disbursed in earnings history
 
 ## Summary: Entry Points by Role
 
-| Role | Web Login → | Mobile Login → |
-|------|-------------|----------------|
-| Patient | `/patient` | `/(tabs)` |
-| Doctor | `/doctor` | `/(doctor)` |
-| Pharmacy Partner | `/partner/pharmacy` | `/(partner)` |
-| Lab Partner | `/partner/lab` | `/(partner)` |
-| Field Agent | — (web not available) | `/(field_agent)` |
-| Admin | `/admin` | — (mobile not available) |
+| Role             | Web Login →           | Mobile Login →           |
+| ---------------- | --------------------- | ------------------------ |
+| Patient          | `/patient`            | `/(tabs)`                |
+| Doctor           | `/doctor`             | `/(doctor)`              |
+| Pharmacy Partner | `/partner/pharmacy`   | `/(partner)`             |
+| Lab              | `/partner/lab`        | `/(partner)`             |
+| Field Agent      | — (web not available) | `/(field_agent)`         |
+| Admin            | `/admin`              | — (mobile not available) |
 
 ---
 
 ## Notification Triggers (All Roles)
 
-| Event | Patient | Doctor | Partner | Field Agent | Admin |
-|-------|---------|--------|---------|-------------|-------|
-| Appointment booked | ✓ email + push | ✓ push | — | — | — |
-| Appointment 24h reminder | ✓ email + push | ✓ push | — | — | — |
-| Appointment 1h reminder | ✓ email + push | ✓ push | — | — | — |
-| Consultation ended | ✓ push | — | — | — | — |
-| Prescription issued | ✓ email + push | — | — | — | — |
-| Pharmacy order status change | ✓ push | — | ✓ push | — | — |
-| Lab result uploaded | ✓ email + push | — | — | — | — |
-| Sample collected | ✓ push | — | ✓ push | — | — |
-| Red triage alert | ✓ email + SMS + push | — | — | — | — |
-| KYC approved | — | ✓ email | ✓ email | — | — |
-| Payout approved | — | ✓ push | ✓ push | — | — |
-| New order/request | — | — | ✓ push | — | — |
-| Visit assigned | — | — | — | ✓ push | — |
+| Event                        | Patient              | Doctor  | Partner | Field Agent | Admin |
+| ---------------------------- | -------------------- | ------- | ------- | ----------- | ----- |
+| Appointment booked           | ✓ email + push       | ✓ push  | —       | —           | —     |
+| Appointment 24h reminder     | ✓ email + push       | ✓ push  | —       | —           | —     |
+| Appointment 1h reminder      | ✓ email + push       | ✓ push  | —       | —           | —     |
+| Consultation ended           | ✓ push               | —       | —       | —           | —     |
+| Prescription issued          | ✓ email + push       | —       | —       | —           | —     |
+| Pharmacy order status change | ✓ push               | —       | ✓ push  | —           | —     |
+| Lab result uploaded          | ✓ email + push       | —       | —       | —           | —     |
+| Sample collected             | ✓ push               | —       | ✓ push  | —           | —     |
+| Red triage alert             | ✓ email + SMS + push | —       | —       | —           | —     |
+| KYC approved                 | —                    | ✓ email | ✓ email | —           | —     |
+| Payout approved              | —                    | ✓ push  | ✓ push  | —           | —     |
+| New order/request            | —                    | —       | ✓ push  | —           | —     |
+| Visit assigned               | —                    | —       | —       | ✓ push      | —     |
 
 ---
 
-*Last updated: 2026-08-10*
+_Last updated: 2026-08-10_
