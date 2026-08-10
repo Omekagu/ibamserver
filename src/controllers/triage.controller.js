@@ -1,9 +1,13 @@
 const { randomUUID } = require('crypto');
 const Triage = require('../models/Triage');
+const User = require('../models/User');
 const questions = require('../data/triageQuestions.json');
 const { sendSuccess } = require('../utils/response');
 const AppError = require('../utils/AppError');
 const asyncHandler = require('../utils/asyncHandler');
+const { createNotification } = require('../services/notification.service');
+const { sendEmergencyTriageEmail } = require('../services/email.service');
+const { sendSMS } = require('../services/termii.service');
 
 const classify = (score) => {
   if (score >= 30) return { classification: 'red', recommendedAction: 'Seek emergency care immediately or call an ambulance.' };
@@ -50,6 +54,27 @@ exports.submitAnswers = asyncHandler(async (req, res, next) => {
   session.recommendedAction = recommendedAction;
   session.completedAt = new Date();
   await session.save();
+
+  // Emergency alert for red classification
+  if (classification === 'red') {
+    User.findById(req.user._id).select('name email phone').lean().then(user => {
+      if (!user) return;
+      createNotification({
+        userId: req.user._id,
+        type: 'triage_red',
+        title: '⚠️ Emergency: Seek Care Immediately',
+        message: 'Your symptom check result is RED. Please go to the nearest emergency room or call 199/112 now.',
+        metadata: { triageId: session._id, classification: 'red' },
+      }).catch(() => {});
+      if (user.email) sendEmergencyTriageEmail({ email: user.email, name: user.name }).catch(() => {});
+      if (user.phone) {
+        sendSMS({
+          to: user.phone,
+          message: `iBam Health URGENT: ${user.name}, your symptom check is RED. Please seek emergency care immediately. Call 199 or 112.`,
+        }).catch(() => {});
+      }
+    }).catch(() => {});
+  }
 
   sendSuccess(res, 200, 'Triage completed.', { session });
 });

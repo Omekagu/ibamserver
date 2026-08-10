@@ -320,18 +320,21 @@ const sendDoctorApprovedEmail = ({ email, name }) =>
     text: `Dr. ${name}, your iBam Health doctor account has been approved!`,
   });
 
-const sendPartnerApprovedEmail = ({ email, name, partnerType }) =>
-  sendEmail({
+const sendPartnerApprovedEmail = ({ email, name, partnerType }) => {
+  const isLab = (partnerType || '').toLowerCase().includes('lab');
+  const portalUrl = isLab ? `${APP_URL}/lab` : `${APP_URL}/pharmacy`;
+  return sendEmail({
     to: email,
     subject: 'Your iBam Health partner account is approved!',
     html: base(`
       ${h2(`Welcome to the Network, ${name}! 🤝`)}
       ${pill('Approved', '#10B981')}
       ${para(`Your ${partnerType || 'partner'} account on iBam Health has been approved. You can now manage your services and accept orders.`)}
-      ${btn(`${APP_URL}/partner`, 'Open Partner Portal')}
+      ${btn(portalUrl, 'Open Partner Portal')}
     `),
-    text: `${name}, your iBam Health partner account has been approved!`,
+    text: `${name}, your iBam Health partner account has been approved! Log in at ${portalUrl}`,
   });
+};
 
 // ─── Appointment booked (patient confirmation) ───
 const sendAppointmentBookedPatientEmail = ({ patientEmail, patientName, doctorName, type, scheduledAt }) =>
@@ -591,7 +594,7 @@ const sendHomeVisitScheduledEmail = ({ email, name, scheduledAt }) =>
 // ─── Account created by admin ─────────────────────
 const sendAccountCreatedEmail = ({ email, name, password, role }) => {
   const roleLabels = { doctor: 'Doctor', lab_partner: 'Diagnostic Lab', pharmacy_partner: 'Pharmacy Partner' };
-  const portals = { doctor: `${APP_URL}/doctor`, lab_partner: `${APP_URL}/partner`, pharmacy_partner: `${APP_URL}/partner` };
+  const portals = { doctor: `${APP_URL}/doctor`, lab_partner: `${APP_URL}/lab`, pharmacy_partner: `${APP_URL}/pharmacy` };
   const label = roleLabels[role] || 'Partner';
   const portal = portals[role] || APP_URL;
   return sendEmail({
@@ -628,6 +631,44 @@ const sendAdminAlertEmail = ({ subject: sub, headline, body: bodyText, ctaLabel,
   });
 };
 
+const sendEmergencyTriageEmail = ({ email, name }) =>
+  sendEmail({
+    to: email,
+    subject: '⚠️ URGENT: Seek Emergency Care Immediately — iBam Health',
+    html: base(`
+      ${h2('Emergency Alert ⚠️')}
+      ${pill('RED — Seek Emergency Care Now', '#EF4444')}
+      ${para(`Hi ${name}, your symptom check result is <strong>RED</strong>, indicating a potentially serious condition that requires <strong>immediate medical attention</strong>.`)}
+      ${para('<strong>Please do one of the following right away:</strong>')}
+      <ul style="margin:12px 0 16px 24px;color:#374151;font-size:15px;line-height:1.6">
+        <li>Call emergency services: <strong>199 (NEMA) / 112 (General Emergency)</strong></li>
+        <li>Go to the nearest hospital emergency room</li>
+        <li>Ask someone to take you to a healthcare facility immediately</li>
+      </ul>
+      ${btn(`${APP_URL}/patient/facilities`, 'Find Nearest Emergency Facility')}
+      ${para('Do not wait — please act now.', '#EF4444')}
+    `),
+    text: `URGENT: ${name}, your triage result is RED. Seek emergency care immediately. Call 199 or 112.`,
+  });
+
+const sendAppointmentReminderEmail = ({ email, name, doctorName, patientName, type, scheduledAt, windowLabel }) =>
+  sendEmail({
+    to: email,
+    subject: `Reminder: Appointment ${windowLabel} — iBam Health`,
+    html: base(`
+      ${h2(`Your appointment is ${windowLabel}!`)}
+      ${pill(windowLabel, windowLabel.includes('1') ? '#EF4444' : '#F59E0B')}
+      <div style="margin:20px 0;border:1px solid #E5E7EB;border-radius:12px;overflow:hidden">
+        ${info('Doctor', `Dr. ${doctorName}`)}
+        ${info('Patient', patientName)}
+        ${info('Type', (type || '').charAt(0).toUpperCase() + (type || '').slice(1))}
+        ${info('Time', new Date(scheduledAt).toLocaleString('en-NG', { dateStyle: 'full', timeStyle: 'short' }))}
+      </div>
+      ${btn(`${APP_URL}/patient/appointments`, 'View Appointment')}
+    `),
+    text: `Reminder: Your appointment is ${windowLabel}. Doctor: ${doctorName} | Time: ${new Date(scheduledAt).toLocaleString()}`,
+  });
+
 module.exports = {
   sendEmail,
   sendOTPEmail,
@@ -659,4 +700,6 @@ module.exports = {
   sendSampleCollectedEmail,
   sendHomeVisitScheduledEmail,
   sendAccountCreatedEmail,
+  sendAppointmentReminderEmail,
+  sendEmergencyTriageEmail,
 };

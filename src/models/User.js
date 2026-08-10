@@ -27,6 +27,8 @@ const userSchema = new mongoose.Schema(
     passwordResetToken: { type: String, select: false },
     passwordResetExpires: { type: Date, select: false },
     expoPushToken: { type: String, default: null },
+    loginAttemptCount: { type: Number, default: 0, select: false },
+    loginLockedUntil:  { type: Date,   default: null, select: false },
   },
   { timestamps: true }
 );

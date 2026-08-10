@@ -3,6 +3,7 @@ const axios = require('axios');
 const User = require('../models/User');
 const Patient = require('../models/Patient');
 const Doctor = require('../models/Doctor');
+const GooglePending = require('../models/GooglePending');
 const { signAccessToken, signRefreshToken, verifyRefreshToken } = require('../utils/jwt');
 const { generateOTP, storeOTP, verifyOTP } = require('../utils/otp');
 const { sendSMS } = require('../services/termii.service');
@@ -17,58 +18,25 @@ const issueTokens = (user) => ({
   refreshToken: signRefreshToken({ id: user._id }),
 });
 
-// ── In-memory login attempt tracker (per email) ────────────────────────────
-const loginAttempts = new Map(); // email → { count, lockedUntil }
-const MAX_ATTEMPTS = 5;
+const MAX_ATTEMPTS    = 5;
 const LOCK_DURATION_MS = 15 * 60 * 1000;
+const GOOGLE_PENDING_TTL_MS = 10 * 60 * 1000;
 
-// ── In-memory Google pending-signup store ──────────────────────────────────
-const googlePendingStore = new Map(); // token → { googleId, name, email, picture, expiresAt }
-const GOOGLE_PENDING_TTL_MS = 10 * 60 * 1000; // 10 minutes
-
-function storePendingGoogle (profile) {
+// ── Google pending-signup store (DB-backed, survives server restarts) ──────
+async function storePendingGoogle (profile) {
   const token = crypto.randomBytes(16).toString('hex');
-  googlePendingStore.set(token, { ...profile, expiresAt: Date.now() + GOOGLE_PENDING_TTL_MS });
+  await GooglePending.create({ token, ...profile, expiresAt: new Date(Date.now() + GOOGLE_PENDING_TTL_MS) });
   return token;
 }
 
-function consumePendingGoogle (token) {
-  const entry = googlePendingStore.get(token);
-  if (!entry) return null;
-  if (Date.now() > entry.expiresAt) { googlePendingStore.delete(token); return null; }
-  googlePendingStore.delete(token); // one-time use
+async function consumePendingGoogle (token) {
+  const entry = await GooglePending.findOneAndDelete({ token, expiresAt: { $gt: new Date() } });
+  return entry ? entry.toObject() : null;
+}
+
+async function peekPendingGoogle (token) {
+  const entry = await GooglePending.findOne({ token, expiresAt: { $gt: new Date() } }).lean();
   return entry;
-}
-
-function peekPendingGoogle (token) {
-  const entry = googlePendingStore.get(token);
-  if (!entry) return null;
-  if (Date.now() > entry.expiresAt) { googlePendingStore.delete(token); return null; }
-  return entry;
-}
-
-function checkLoginLock(email) {
-  const record = loginAttempts.get(email);
-  if (!record) return null;
-  if (record.lockedUntil && Date.now() < record.lockedUntil) {
-    const mins = Math.ceil((record.lockedUntil - Date.now()) / 60_000);
-    return `Account temporarily locked. Try again in ${mins} minute${mins !== 1 ? 's' : ''}.`;
-  }
-  return null;
-}
-
-function recordFailedLogin(email) {
-  const record = loginAttempts.get(email) || { count: 0, lockedUntil: null };
-  record.count += 1;
-  if (record.count >= MAX_ATTEMPTS) {
-    record.lockedUntil = Date.now() + LOCK_DURATION_MS;
-    record.count = 0;
-  }
-  loginAttempts.set(email, record);
-}
-
-function clearLoginLock(email) {
-  loginAttempts.delete(email);
 }
 
 exports.register = asyncHandler(async (req, res, next) => {
@@ -139,18 +107,29 @@ exports.login = asyncHandler(async (req, res, next) => {
     return next(new AppError('Please provide email or phone and password.', 400));
   }
 
-  const lockKey = (email || phone).toLowerCase().trim();
-  const lockMsg = checkLoginLock(lockKey);
-  if (lockMsg) return next(new AppError(lockMsg, 429));
-
   const query = email ? { email } : { phone };
-  const user = await User.findOne(query).select('+password');
-  if (!user || !(await user.comparePassword(password))) {
-    recordFailedLogin(lockKey);
+  const user = await User.findOne(query).select('+password +loginAttemptCount +loginLockedUntil');
+  if (!user) return next(new AppError('Invalid credentials.', 401));
+
+  // Check if account is locked
+  if (user.loginLockedUntil && user.loginLockedUntil > new Date()) {
+    const mins = Math.ceil((user.loginLockedUntil - Date.now()) / 60_000);
+    return next(new AppError(`Account temporarily locked. Try again in ${mins} minute${mins !== 1 ? 's' : ''}.`, 429));
+  }
+
+  if (!(await user.comparePassword(password))) {
+    const newCount = (user.loginAttemptCount || 0) + 1;
+    const update = newCount >= MAX_ATTEMPTS
+      ? { loginAttemptCount: 0, loginLockedUntil: new Date(Date.now() + LOCK_DURATION_MS) }
+      : { loginAttemptCount: newCount, loginLockedUntil: null };
+    await User.findByIdAndUpdate(user._id, update);
     return next(new AppError('Invalid credentials.', 401));
   }
 
-  clearLoginLock(lockKey);
+  // Successful login — clear lock
+  if (user.loginAttemptCount || user.loginLockedUntil) {
+    await User.findByIdAndUpdate(user._id, { loginAttemptCount: 0, loginLockedUntil: null });
+  }
 
   if (!user.isActive) return next(new AppError('Account deactivated. Contact support.', 403));
   if (!user.isVerified) return next(new AppError('Please verify your email before logging in.', 403));
@@ -374,11 +353,11 @@ exports.googleCallback = asyncHandler(async (req, res) => {
   const user = await User.findOne({ $or: [{ googleId }, { email }] });
 
   if (!user) {
+    const pendingToken = await storePendingGoogle({ googleId, name, email, picture });
     if (platform === 'mobile') {
-      return res.redirect(`ibam://auth/error?message=${encodeURIComponent('No account found. Please sign up first.')}`);
+      return res.redirect(`ibam://auth/google/pending?token=${encodeURIComponent(pendingToken)}`);
     }
-    // Web: store Google profile in pending store and redirect to signup for role selection
-    const pendingToken = storePendingGoogle({ googleId, name, email, picture });
+    // Web: redirect to signup for role selection
     return res.redirect(`${CLIENT}/signup?googleToken=${encodeURIComponent(pendingToken)}`);
   }
 
@@ -427,7 +406,7 @@ exports.googleCallback = asyncHandler(async (req, res) => {
 exports.getGooglePending = asyncHandler(async (req, res, next) => {
   const { token } = req.query;
   if (!token) return next(new AppError('token is required.', 400));
-  const profile = peekPendingGoogle(token);
+  const profile = await peekPendingGoogle(token);
   if (!profile) return next(new AppError('Link expired or invalid. Please try Google sign-in again.', 410));
   sendSuccess(res, 200, 'Pending profile retrieved.', {
     name: profile.name,
@@ -441,7 +420,7 @@ exports.completeGoogleSignup = asyncHandler(async (req, res, next) => {
   const { token, role, phone, specialization, licenseNumber } = req.body;
   if (!token) return next(new AppError('token is required.', 400));
 
-  const pending = consumePendingGoogle(token);
+  const pending = await consumePendingGoogle(token);
   if (!pending) return next(new AppError('Link expired. Please try Google sign-in again.', 410));
 
   const allowedRoles = ['patient', 'doctor'];

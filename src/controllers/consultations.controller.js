@@ -9,6 +9,7 @@ const { sendSuccess } = require('../utils/response');
 const AppError = require('../utils/AppError');
 const asyncHandler = require('../utils/asyncHandler');
 const { filterProfanity } = require('../utils/profanityFilter');
+const { getIO } = require('../config/socket');
 
 const PLATFORM_CUT_PERCENT = Number(process.env.PLATFORM_CUT_PERCENT) || 20;
 
@@ -172,6 +173,20 @@ exports.sendMessage = asyncHandler(async (req, res, next) => {
   });
 
   await message.populate('sender', 'name avatar');
+
+  try {
+    getIO().to(`consultation:${req.params.id}`).emit('new_message', {
+      consultationId: req.params.id,
+      message: {
+        _id: message._id,
+        content: message.content,
+        type: message.type,
+        sender: message.sender,
+        createdAt: message.createdAt,
+      },
+    });
+  } catch { /* socket not initialised in test env */ }
+
   sendSuccess(res, 201, 'Message sent.', { message });
 });
 
@@ -186,6 +201,23 @@ exports.uploadChatFile = asyncHandler(async (req, res, next) => {
     fileUrl: result.secure_url,
     fileName: req.file.originalname,
   });
+
+  await msg.populate('sender', 'name avatar');
+
+  try {
+    getIO().to(`consultation:${req.params.id}`).emit('new_message', {
+      consultationId: req.params.id,
+      message: {
+        _id: msg._id,
+        content: msg.content,
+        type: msg.type,
+        fileUrl: msg.fileUrl,
+        fileName: msg.fileName,
+        sender: msg.sender,
+        createdAt: msg.createdAt,
+      },
+    });
+  } catch { /* socket not initialised in test env */ }
 
   sendSuccess(res, 201, 'File uploaded.', { message: msg });
 });
