@@ -21,6 +21,7 @@ const diagnosticsRequestSchema = new mongoose.Schema(
       enum: ['na', 'pending', 'approved', 'rejected'],
       default: 'na',
     },
+    wellnessPackage: { type: mongoose.Schema.Types.ObjectId, ref: 'WellnessPackage' },
     paymentRef: { type: mongoose.Schema.Types.ObjectId, ref: 'Payment' },
     notes: { type: String },
     resultNotes: { type: String },

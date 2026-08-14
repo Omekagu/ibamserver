@@ -8,6 +8,7 @@ const Specialization = require('../models/Specialization')
 const PlatformService = require('../models/PlatformService')
 const SubscriptionPlan = require('../models/SubscriptionPlan')
 const LabTest = require('../models/LabTest')
+const WellnessPackage = require('../models/WellnessPackage')
 
 // ─── Admin ────────────────────────────────────────────────────────────────────
 async function seedAdmin () {
@@ -261,187 +262,93 @@ async function seedPlans () {
 }
 
 // ─── Lab test catalog ─────────────────────────────────────────────────────────
+// Prices sourced from iBam Health General Patient Price List (official).
 const DEFAULT_LAB_TESTS = [
-  {
-    name: 'Full Blood Count (FBC)',
-    category: 'Haematology',
-    walkInPrice: 3500,
-    homeVisitPrice: 5500,
-    estimatedPrice: 3500,
-    turnaroundHours: 24,
-    order: 0
-  },
-  {
-    name: 'Malaria Parasite Test',
-    category: 'Microbiology',
-    walkInPrice: 2000,
-    homeVisitPrice: 3500,
-    estimatedPrice: 2000,
-    turnaroundHours: 12,
-    order: 1
-  },
-  {
-    name: 'Blood Sugar (Fasting Glucose)',
-    category: 'Biochemistry',
-    walkInPrice: 1500,
-    homeVisitPrice: 3000,
-    estimatedPrice: 1500,
-    turnaroundHours: 6,
-    order: 2
-  },
-  {
-    name: 'Hepatitis B Surface Antigen',
-    category: 'Serology',
-    walkInPrice: 3000,
-    homeVisitPrice: 5000,
-    estimatedPrice: 3000,
-    turnaroundHours: 24,
-    order: 3
-  },
-  {
-    name: 'HIV Screening',
-    category: 'Serology',
-    walkInPrice: 3000,
-    homeVisitPrice: 5000,
-    estimatedPrice: 3000,
-    turnaroundHours: 24,
-    order: 4
-  },
-  {
-    name: 'Urine Analysis',
-    category: 'Microbiology',
-    walkInPrice: 1500,
-    homeVisitPrice: 3000,
-    estimatedPrice: 1500,
-    turnaroundHours: 12,
-    order: 5
-  },
-  {
-    name: 'Widal Test',
-    category: 'Serology',
-    walkInPrice: 2000,
-    homeVisitPrice: 3500,
-    estimatedPrice: 2000,
-    turnaroundHours: 24,
-    order: 6
-  },
-  {
-    name: 'Electrolytes, Urea & Creatinine',
-    category: 'Biochemistry',
-    walkInPrice: 5000,
-    homeVisitPrice: 7500,
-    estimatedPrice: 5000,
-    turnaroundHours: 24,
-    order: 7
-  },
-  {
-    name: 'Liver Function Tests (LFT)',
-    category: 'Biochemistry',
-    walkInPrice: 6000,
-    homeVisitPrice: 9000,
-    estimatedPrice: 6000,
-    turnaroundHours: 24,
-    order: 8
-  },
-  {
-    name: 'Lipid Profile',
-    category: 'Biochemistry',
-    walkInPrice: 5500,
-    homeVisitPrice: 8000,
-    estimatedPrice: 5500,
-    turnaroundHours: 24,
-    order: 9
-  },
-  {
-    name: 'Kidney Function Test (KFT)',
-    category: 'Biochemistry',
-    walkInPrice: 5000,
-    homeVisitPrice: 7500,
-    estimatedPrice: 5000,
-    turnaroundHours: 24,
-    order: 10
-  },
-  {
-    name: 'Thyroid Function (TSH)',
-    category: 'Endocrinology',
-    walkInPrice: 6500,
-    homeVisitPrice: 9500,
-    estimatedPrice: 6500,
-    turnaroundHours: 48,
-    order: 11
-  },
-  {
-    name: 'Hepatitis C Antibody',
-    category: 'Serology',
-    walkInPrice: 3500,
-    homeVisitPrice: 5500,
-    estimatedPrice: 3500,
-    turnaroundHours: 24,
-    order: 12
-  },
-  {
-    name: 'Blood Group & Genotype',
-    category: 'Haematology',
-    walkInPrice: 2500,
-    homeVisitPrice: 4500,
-    estimatedPrice: 2500,
-    turnaroundHours: 6,
-    order: 13
-  },
-  {
-    name: 'Chest X-Ray',
-    category: 'Radiology',
-    walkInPrice: 8000,
-    homeVisitPrice: null,
-    estimatedPrice: 8000,
-    turnaroundHours: 4,
-    order: 14
-  },
-  {
-    name: 'ECG',
-    category: 'Cardiology',
-    walkInPrice: 5000,
-    homeVisitPrice: null,
-    estimatedPrice: 5000,
-    turnaroundHours: 2,
-    order: 15
-  },
-  {
-    name: 'Pregnancy Test (hCG)',
-    category: 'Serology',
-    walkInPrice: 1500,
-    homeVisitPrice: 3000,
-    estimatedPrice: 1500,
-    turnaroundHours: 2,
-    order: 16
-  },
-  {
-    name: 'Prostate Specific Antigen (PSA)',
-    category: 'Oncology',
-    walkInPrice: 8000,
-    homeVisitPrice: 11000,
-    estimatedPrice: 8000,
-    turnaroundHours: 48,
-    order: 17
-  },
-  {
-    name: 'Rheumatoid Factor',
-    category: 'Immunology',
-    walkInPrice: 4000,
-    homeVisitPrice: 6500,
-    estimatedPrice: 4000,
-    turnaroundHours: 24,
-    order: 18
-  },
-  {
-    name: 'Vitamin D (25-OH)',
-    category: 'Endocrinology',
-    walkInPrice: 12000,
-    homeVisitPrice: 16000,
-    estimatedPrice: 12000,
-    turnaroundHours: 48,
-    order: 19
-  }
+  // HAEMATOLOGY & SOME ROUTINE TESTS
+  { name: 'Full Blood Count (FBC)',                     category: 'Haematology',         walkInPrice: 10000, homeVisitPrice: 13500, estimatedPrice: 10000, turnaroundHours: 24, order: 1  },
+  { name: 'Haemoglobin (Blood Level)',                  category: 'Haematology',         walkInPrice:  5000, homeVisitPrice:  8500, estimatedPrice:  5000, turnaroundHours: 12, order: 2  },
+  { name: 'PCV (Blood Percentage)',                     category: 'Haematology',         walkInPrice:  5000, homeVisitPrice:  8500, estimatedPrice:  5000, turnaroundHours: 12, order: 3  },
+  { name: 'Blood Film Only',                            category: 'Haematology',         walkInPrice: 10000, homeVisitPrice: 13500, estimatedPrice: 10000, turnaroundHours: 24, order: 4  },
+  { name: 'ESR',                                        category: 'Haematology',         walkInPrice:  5000, homeVisitPrice:  8500, estimatedPrice:  5000, turnaroundHours: 12, order: 5  },
+  { name: 'Platelet',                                   category: 'Haematology',         walkInPrice:  5000, homeVisitPrice:  8500, estimatedPrice:  5000, turnaroundHours: 12, order: 6  },
+  { name: 'Blood Grouping',                             category: 'Haematology',         walkInPrice:  5000, homeVisitPrice:  8500, estimatedPrice:  5000, turnaroundHours:  6, order: 24 },
+  { name: 'Genotype',                                   category: 'Haematology',         walkInPrice:  4500, homeVisitPrice:  8000, estimatedPrice:  4500, turnaroundHours:  6, order: 25 },
+  { name: 'Clotting Profile',                           category: 'Haematology',         walkInPrice: 30000, homeVisitPrice: 33500, estimatedPrice: 30000, turnaroundHours: 24, order: 21 },
+  { name: 'Prothrombin Time',                           category: 'Haematology',         walkInPrice: 17000, homeVisitPrice: 20500, estimatedPrice: 17000, turnaroundHours: 24, order: 22 },
+  { name: 'Coagulation Profile (PT/INR, APTT)',         category: 'Haematology',         walkInPrice: 30000, homeVisitPrice: 33500, estimatedPrice: 30000, turnaroundHours: 24, order: 23 },
+
+  // ROUTINE / SEROLOGY
+  { name: 'Malaria Parasite',                           category: 'Serology',            walkInPrice:  3500, homeVisitPrice:  7000, estimatedPrice:  3500, turnaroundHours: 12, order: 7  },
+  { name: 'Widal Test (Typhoid)',                       category: 'Serology',            walkInPrice:  3500, homeVisitPrice:  7000, estimatedPrice:  3500, turnaroundHours: 24, order: 8  },
+  { name: 'Occult Blood Test',                          category: 'Serology',            walkInPrice:  4500, homeVisitPrice:  8000, estimatedPrice:  4500, turnaroundHours: 12, order: 11 },
+  { name: 'H. Pylori Antibody Test',                   category: 'Serology',            walkInPrice:  4500, homeVisitPrice:  8000, estimatedPrice:  4500, turnaroundHours: 24, order: 12 },
+  { name: 'HIV 1&2 Screening Test (RVS)',               category: 'Serology',            walkInPrice:  3500, homeVisitPrice:  7000, estimatedPrice:  3500, turnaroundHours: 24, order: 13 },
+  { name: 'HIV 1&2 Confirmatory Test (P24 Antigen)',    category: 'Serology',            walkInPrice: 11000, homeVisitPrice: 14500, estimatedPrice: 11000, turnaroundHours: 48, order: 14 },
+  { name: 'Syphilis (VDRL)',                            category: 'Serology',            walkInPrice:  3500, homeVisitPrice:  7000, estimatedPrice:  3500, turnaroundHours: 24, order: 15 },
+  { name: 'Hepatitis B or C',                           category: 'Serology',            walkInPrice:  3500, homeVisitPrice:  7000, estimatedPrice:  3500, turnaroundHours: 24, order: 16 },
+  { name: 'Hepatitis B 5-Panel Test',                   category: 'Serology',            walkInPrice: 30000, homeVisitPrice: 33500, estimatedPrice: 30000, turnaroundHours: 48, order: 17 },
+  { name: 'Chlamydia Screening',                        category: 'Serology',            walkInPrice: 15000, homeVisitPrice: 18500, estimatedPrice: 15000, turnaroundHours: 48, order: 18 },
+  { name: 'Filarial Parasite',                          category: 'Serology',            walkInPrice:  4500, homeVisitPrice:  8000, estimatedPrice:  4500, turnaroundHours: 24, order: 19 },
+  { name: 'Pregnancy Test – Blood',                     category: 'Serology',            walkInPrice:  3500, homeVisitPrice:  7000, estimatedPrice:  3500, turnaroundHours:  6, order: 20 },
+  { name: 'Pregnancy Test – Urine',                     category: 'Serology',            walkInPrice:  3500, homeVisitPrice:  7000, estimatedPrice:  3500, turnaroundHours:  2, order: 201},
+  { name: 'Rheumatoid Factor',                          category: 'Serology',            walkInPrice:  9000, homeVisitPrice: 12500, estimatedPrice:  9000, turnaroundHours: 24, order: 56 },
+  { name: 'ASO Titre',                                  category: 'Serology',            walkInPrice: 11000, homeVisitPrice: 14500, estimatedPrice: 11000, turnaroundHours: 24, order: 57 },
+  { name: 'HSV',                                        category: 'Serology',            walkInPrice: 25000, homeVisitPrice: 28500, estimatedPrice: 25000, turnaroundHours: 48, order: 70 },
+  { name: 'HPV',                                        category: 'Serology',            walkInPrice: 35000, homeVisitPrice: 38500, estimatedPrice: 35000, turnaroundHours: 48, order: 71 },
+  { name: 'ECS',                                        category: 'Serology',            walkInPrice: 10000, homeVisitPrice: 13500, estimatedPrice: 10000, turnaroundHours: 24, order: 72 },
+
+  // ROUTINE
+  { name: 'Urinalysis',                                 category: 'Routine',             walkInPrice:  5000, homeVisitPrice:  8500, estimatedPrice:  5000, turnaroundHours: 12, order: 9  },
+  { name: 'Stool Microscopy',                           category: 'Routine',             walkInPrice:  5500, homeVisitPrice:  9000, estimatedPrice:  5500, turnaroundHours: 24, order: 10 },
+
+  // CULTURES & MICROBIOLOGY
+  { name: 'Urine Culture (M/C/S)',                      category: 'Microbiology',        walkInPrice:  7000, homeVisitPrice: 10500, estimatedPrice:  7000, turnaroundHours: 72, order: 26 },
+  { name: 'HVS M/C/S & Other Surface Swabs',           category: 'Microbiology',        walkInPrice:  7000, homeVisitPrice: 10500, estimatedPrice:  7000, turnaroundHours: 72, order: 27 },
+  { name: 'Wound Swab & Other Surface Swabs',           category: 'Microbiology',        walkInPrice:  7000, homeVisitPrice: 10500, estimatedPrice:  7000, turnaroundHours: 72, order: 28 },
+  { name: 'Urethra Smear (M/C/S)',                      category: 'Microbiology',        walkInPrice:  7000, homeVisitPrice: 10500, estimatedPrice:  7000, turnaroundHours: 72, order: 29 },
+  { name: 'Stool Culture (M/C/S)',                      category: 'Microbiology',        walkInPrice:  9000, homeVisitPrice: 12500, estimatedPrice:  9000, turnaroundHours: 72, order: 30 },
+  { name: 'Blood Culture',                              category: 'Microbiology',        walkInPrice: 30000, homeVisitPrice: 33500, estimatedPrice: 30000, turnaroundHours: 72, order: 31 },
+  { name: 'Semen Analysis & Culture',                   category: 'Microbiology',        walkInPrice: 15000, homeVisitPrice: 18500, estimatedPrice: 15000, turnaroundHours: 48, order: 32 },
+  { name: 'Semen Analysis Only',                        category: 'Microbiology',        walkInPrice:  7000, homeVisitPrice: 10500, estimatedPrice:  7000, turnaroundHours: 48, order: 33 },
+  { name: 'Skin Snip',                                  category: 'Microbiology',        walkInPrice:  4500, homeVisitPrice:  8000, estimatedPrice:  4500, turnaroundHours: 48, order: 34 },
+  { name: 'Sputum Microscopy Only',                     category: 'Microbiology',        walkInPrice:  4500, homeVisitPrice:  8000, estimatedPrice:  4500, turnaroundHours: 24, order: 35 },
+  { name: 'Sputum M/C/S',                              category: 'Microbiology',        walkInPrice: 10000, homeVisitPrice: 13500, estimatedPrice: 10000, turnaroundHours: 72, order: 36 },
+  { name: 'Sputum AFB x1x2x3',                         category: 'Microbiology',        walkInPrice: 15000, homeVisitPrice: 18500, estimatedPrice: 15000, turnaroundHours: 72, order: 37 },
+  { name: 'Mantoux Test',                               category: 'Microbiology',        walkInPrice:  5500, homeVisitPrice:  9000, estimatedPrice:  5500, turnaroundHours: 72, order: 38 },
+  { name: 'CSF M/C/S and Cell Count',                  category: 'Microbiology',        walkInPrice: 22000, homeVisitPrice: 25500, estimatedPrice: 22000, turnaroundHours: 72, order: 39 },
+  { name: 'Ascitic Fluid M/C/S',                       category: 'Microbiology',        walkInPrice: 11000, homeVisitPrice: 14500, estimatedPrice: 11000, turnaroundHours: 72, order: 40 },
+  { name: 'Fungal Studies',                             category: 'Microbiology',        walkInPrice: 11000, homeVisitPrice: 14500, estimatedPrice: 11000, turnaroundHours: 72, order: 41 },
+
+  // CHEMICAL PATHOLOGY / CLINICAL CHEMISTRY
+  { name: 'Serum Electrolytes, Urea & Creatinine (SEUCr) – Each', category: 'Biochemistry', walkInPrice:  5500, homeVisitPrice:  9000, estimatedPrice:  5500, turnaroundHours: 24, order: 42 },
+  { name: 'Electrolytes Only (Na, K, Cl, HCO3, pH, iCa)',         category: 'Biochemistry', walkInPrice: 15000, homeVisitPrice: 18500, estimatedPrice: 15000, turnaroundHours: 24, order: 43 },
+  { name: 'Urea & Creatinine Only',                    category: 'Biochemistry',        walkInPrice:  9000, homeVisitPrice: 12500, estimatedPrice:  9000, turnaroundHours: 24, order: 44 },
+  { name: 'Liver Function Test (LFT)',                  category: 'Biochemistry',        walkInPrice: 15000, homeVisitPrice: 18500, estimatedPrice: 15000, turnaroundHours: 24, order: 45 },
+  { name: 'Lipid Profile',                              category: 'Biochemistry',        walkInPrice: 15000, homeVisitPrice: 18500, estimatedPrice: 15000, turnaroundHours: 24, order: 46 },
+  { name: 'Cholesterol',                                category: 'Biochemistry',        walkInPrice:  7000, homeVisitPrice: 10500, estimatedPrice:  7000, turnaroundHours: 24, order: 47 },
+  { name: 'Uric Acid',                                  category: 'Biochemistry',        walkInPrice:  8000, homeVisitPrice: 11500, estimatedPrice:  8000, turnaroundHours: 24, order: 48 },
+  { name: 'Serum Protein',                              category: 'Biochemistry',        walkInPrice: 11000, homeVisitPrice: 14500, estimatedPrice: 11000, turnaroundHours: 24, order: 49 },
+  { name: 'Bilirubin (Total & Conjugated)',             category: 'Biochemistry',        walkInPrice:  9000, homeVisitPrice: 12500, estimatedPrice:  9000, turnaroundHours: 24, order: 50 },
+  { name: 'Blood Sugar',                                category: 'Biochemistry',        walkInPrice:  2500, homeVisitPrice:  6000, estimatedPrice:  2500, turnaroundHours:  6, order: 51 },
+  { name: '2HPP Glucose Test',                          category: 'Biochemistry',        walkInPrice:  4500, homeVisitPrice:  8000, estimatedPrice:  4500, turnaroundHours:  6, order: 52 },
+  { name: 'OGTT (x5) Glucose Tolerance Test',          category: 'Biochemistry',        walkInPrice: 11000, homeVisitPrice: 14500, estimatedPrice: 11000, turnaroundHours:  6, order: 53 },
+  { name: 'CSF Chemistry (Sugar & Protein)',            category: 'Biochemistry',        walkInPrice:  9000, homeVisitPrice: 12500, estimatedPrice:  9000, turnaroundHours: 24, order: 54 },
+  { name: 'Calcium & Inorganic Phosphate',              category: 'Biochemistry',        walkInPrice: 11000, homeVisitPrice: 14500, estimatedPrice: 11000, turnaroundHours: 24, order: 55 },
+  { name: 'PSA Total',                                  category: 'Biochemistry',        walkInPrice: 14000, homeVisitPrice: 17500, estimatedPrice: 14000, turnaroundHours: 48, order: 58 },
+  { name: 'fPSA',                                       category: 'Biochemistry',        walkInPrice: 17000, homeVisitPrice: 20500, estimatedPrice: 17000, turnaroundHours: 48, order: 581},
+  { name: 'Alpha-Feto Protein (AFP)',                   category: 'Biochemistry',        walkInPrice: 17000, homeVisitPrice: 20500, estimatedPrice: 17000, turnaroundHours: 48, order: 68 },
+  { name: 'C-Reactive Protein (CRP)',                   category: 'Biochemistry',        walkInPrice: 17000, homeVisitPrice: 20500, estimatedPrice: 17000, turnaroundHours: 24, order: 69 },
+
+  // HORMONAL / ENDOCRINOLOGY
+  { name: 'FSH, LH, Prolactin & Progesterone (Female)', category: 'Endocrinology',     walkInPrice: 45000, homeVisitPrice: 48500, estimatedPrice: 45000, turnaroundHours: 48, order: 59 },
+  { name: 'FSH, LH, Prolactin, Progesterone & Estradiol (E2)', category: 'Endocrinology', walkInPrice: 55000, homeVisitPrice: 58500, estimatedPrice: 55000, turnaroundHours: 48, order: 60 },
+  { name: 'FSH, LH, Prolactin & Progesterone (Male)',   category: 'Endocrinology',      walkInPrice: 45000, homeVisitPrice: 48500, estimatedPrice: 45000, turnaroundHours: 48, order: 61 },
+  { name: 'Testosterone',                               category: 'Endocrinology',      walkInPrice: 14000, homeVisitPrice: 17500, estimatedPrice: 14000, turnaroundHours: 48, order: 62 },
+  { name: 'Prolactin',                                  category: 'Endocrinology',      walkInPrice: 14000, homeVisitPrice: 17500, estimatedPrice: 14000, turnaroundHours: 48, order: 63 },
+  { name: 'Progesterone',                               category: 'Endocrinology',      walkInPrice: 14000, homeVisitPrice: 17500, estimatedPrice: 14000, turnaroundHours: 48, order: 64 },
+  { name: 'Thyroid Function Test (TSH, T3, T4)',        category: 'Endocrinology',      walkInPrice: 35000, homeVisitPrice: 38500, estimatedPrice: 35000, turnaroundHours: 48, order: 65 },
+  { name: 'TSH or T3 or T4 or Free T3 or Free T4 – Each', category: 'Endocrinology',  walkInPrice: 14000, homeVisitPrice: 17500, estimatedPrice: 14000, turnaroundHours: 48, order: 66 },
+  { name: 'HbA1C (Glycated Haemoglobin)',               category: 'Endocrinology',      walkInPrice: 14000, homeVisitPrice: 17500, estimatedPrice: 14000, turnaroundHours: 48, order: 67 },
 ]
 
 async function seedLabTests () {
@@ -454,6 +361,135 @@ async function seedLabTests () {
   console.log(`[seed] ✅ ${DEFAULT_LAB_TESTS.length} lab tests seeded.`)
 }
 
+// ─── Wellness packages ────────────────────────────────────────────────────────
+// Prices sourced from iBam Health Premium Wellness Packages (official).
+const DEFAULT_WELLNESS_PACKAGES = [
+  {
+    name: 'Men Full Body Wellness Check',
+    slug: 'men-full-body-wellness',
+    gender: 'male',
+    targetAudience: 'Adult men seeking a convenient, broad routine health assessment, especially those who have not had a comprehensive check recently.',
+    benefits: 'Provides a broad picture of blood health, glucose control, cardiovascular risk, liver and kidney function, urinary health, prostate-related screening and selected infectious-disease status.',
+    includedTests: [
+      'Full Blood Count (FBC)', 'Blood Sugar', 'HbA1C (Glycated Haemoglobin)',
+      'Lipid Profile', 'Liver Function Test (LFT)', 'Urea & Creatinine Only',
+      'Urinalysis', 'PSA Total', 'HIV 1&2 Screening Test (RVS)',
+      'Hepatitis B or C', 'HPA', 'HSV'
+    ],
+    walkInPrice: 153500,
+    homeVisitPrice: 157000,
+    order: 0
+  },
+  {
+    name: 'Women Full Body Wellness Check',
+    slug: 'women-full-body-wellness',
+    gender: 'female',
+    targetAudience: 'Adult women seeking a convenient comprehensive routine health assessment.',
+    benefits: 'Assesses blood health, glucose regulation, cardiovascular risk, liver and kidney function, thyroid function and selected infectious diseases.',
+    includedTests: [
+      'Full Blood Count (FBC)', 'Blood Sugar', 'HbA1C (Glycated Haemoglobin)',
+      'Lipid Profile', 'Liver Function Test (LFT)', 'Urea & Creatinine Only',
+      'Urinalysis', 'Thyroid Function Test (TSH, T3, T4)',
+      'HIV 1&2 Screening Test (RVS)', 'Hepatitis B or C', 'ECS', 'HPA', 'HSV'
+    ],
+    walkInPrice: 178500,
+    homeVisitPrice: 182000,
+    order: 1
+  },
+  {
+    name: 'Men Sexual Health Check',
+    slug: 'men-sexual-health',
+    gender: 'male',
+    targetAudience: 'Sexually active men seeking a broader sexual and reproductive health screening.',
+    benefits: 'Screens for selected sexually transmitted infections while providing basic reproductive and hormonal assessment.',
+    includedTests: [
+      'HIV 1&2 Screening Test (RVS)', 'Hepatitis B or C', 'Syphilis (VDRL)',
+      'Chlamydia Screening', 'Urinalysis', 'Semen Analysis Only', 'Testosterone'
+    ],
+    walkInPrice: 55500,
+    homeVisitPrice: 59000,
+    order: 2
+  },
+  {
+    name: 'Women Sexual Health Check',
+    slug: 'women-sexual-health',
+    gender: 'female',
+    targetAudience: 'Sexually active women seeking convenient sexual and reproductive health screening.',
+    benefits: 'Provides selected STI screening together with pregnancy testing and a basic urine assessment.',
+    includedTests: [
+      'HIV 1&2 Screening Test (RVS)', 'Hepatitis B or C', 'Syphilis (VDRL)',
+      'Chlamydia Screening', 'HVS M/C/S & Other Surface Swabs', 'HPV'
+    ],
+    walkInPrice: 75000,
+    homeVisitPrice: 78500,
+    order: 3
+  },
+  {
+    name: 'Pre-Marriage Test Check',
+    slug: 'pre-marriage-test',
+    gender: 'all',
+    targetAudience: 'Couples preparing for marriage who want important baseline infectious, genetic and reproductive health information.',
+    benefits: 'Provides screening for selected infectious diseases, genotype, blood group and pregnancy status before marriage.',
+    includedTests: [
+      'HIV 1&2 Screening Test (RVS)', 'Hepatitis B or C', 'Syphilis (VDRL)',
+      'Genotype', 'Blood Grouping', 'Chlamydia Screening', 'Urinalysis'
+    ],
+    walkInPrice: 32500,
+    homeVisitPrice: 36000,
+    order: 4
+  },
+  {
+    name: 'Women Hormone Check Gold',
+    slug: 'women-hormone-gold',
+    gender: 'female',
+    targetAudience: 'Women seeking the broadest hormonal assessment, especially where reproductive and thyroid concerns are being evaluated.',
+    benefits: 'Provides a broader reproductive and thyroid hormone profile to support clinician-guided assessment.',
+    includedTests: [
+      'FSH, LH, Prolactin & Progesterone (Female)',
+      'FSH, LH, Prolactin, Progesterone & Estradiol (E2)',
+      'Thyroid Function Test (TSH, T3, T4)'
+    ],
+    walkInPrice: 87000,
+    homeVisitPrice: 90500,
+    order: 5
+  },
+  {
+    name: 'Women Hormone Check Bronze',
+    slug: 'women-hormone-bronze',
+    gender: 'female',
+    targetAudience: 'Women who need a basic thyroid hormone assessment based on clinical advice.',
+    benefits: 'Assesses key thyroid hormones and can support evaluation of thyroid-related symptoms.',
+    includedTests: ['Thyroid Function Test (TSH, T3, T4)'],
+    walkInPrice: 35000,
+    homeVisitPrice: 38500,
+    order: 6
+  },
+  {
+    name: 'Back-to-School Package',
+    slug: 'back-to-school',
+    gender: 'all',
+    targetAudience: 'Children, teenagers and young adults preparing to return to school or begin a new academic session.',
+    benefits: 'Provides a basic health screening covering blood parameters, malaria, urine and stool findings, plus blood group and genotype information.',
+    includedTests: [
+      'Full Blood Count (FBC)', 'Malaria Parasite', 'Urinalysis',
+      'Stool Microscopy', 'Blood Grouping', 'Genotype'
+    ],
+    walkInPrice: 25500,
+    homeVisitPrice: 29000,
+    order: 7
+  }
+]
+
+async function seedWellnessPackages () {
+  const count = await WellnessPackage.countDocuments()
+  if (count > 0) {
+    console.log('[seed] Wellness packages already seeded.')
+    return
+  }
+  await WellnessPackage.insertMany(DEFAULT_WELLNESS_PACKAGES)
+  console.log(`[seed] ✅ ${DEFAULT_WELLNESS_PACKAGES.length} wellness packages seeded.`)
+}
+
 // ─── Entry point ──────────────────────────────────────────────────────────────
 async function runAllSeeds () {
   await seedAdmin()
@@ -461,6 +497,7 @@ async function runAllSeeds () {
   await seedServices()
   await seedPlans()
   await seedLabTests()
+  await seedWellnessPackages()
 }
 
 module.exports = runAllSeeds

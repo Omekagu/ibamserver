@@ -3,6 +3,7 @@ const Doctor = require('../models/Doctor');
 const Specialization = require('../models/Specialization');
 const PlatformService = require('../models/PlatformService');
 const LabTest = require('../models/LabTest');
+const WellnessPackage = require('../models/WellnessPackage');
 const Appointment = require('../models/Appointment');
 const Consultation = require('../models/Consultation');
 const Message = require('../models/Message');
@@ -660,11 +661,12 @@ exports.getPublicContent = asyncHandler(async (req, res) => {
   let settings = await PlatformSettings.findOne().select('healthTips announcement');
   if (!settings) settings = await PlatformSettings.create({});
 
-  const [specializations, services, plans, labTests] = await Promise.all([
+  const [specializations, services, plans, labTests, wellnessPackages] = await Promise.all([
     Specialization.find({ isActive: true }).sort({ order: 1, name: 1 }).select('name description'),
     PlatformService.find({ isActive: true }).sort({ order: 1 }).select('-__v'),
     SubscriptionPlan.find({ isActive: true }).sort({ price: 1 }).select('-__v'),
     LabTest.find({ isActive: true }).sort({ order: 1, name: 1 }).select('name category walkInPrice homeVisitPrice estimatedPrice turnaroundHours'),
+    WellnessPackage.find({ isActive: true }).sort({ order: 1, name: 1 }).select('-__v'),
   ]);
 
   sendSuccess(res, 200, 'Public content retrieved.', {
@@ -674,6 +676,7 @@ exports.getPublicContent = asyncHandler(async (req, res) => {
     services,
     plans,
     labTests,
+    wellnessPackages,
   });
 });
 

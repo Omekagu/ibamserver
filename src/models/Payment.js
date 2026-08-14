@@ -8,7 +8,7 @@ const paymentSchema = new mongoose.Schema(
     paystackRef: { type: String },
     type: {
       type: String,
-      enum: ['consultation', 'pharmacy', 'lab_test', 'subscription'],
+      enum: ['consultation', 'pharmacy', 'lab_test', 'subscription', 'wellness_package'],
       required: true,
     },
     method: {
