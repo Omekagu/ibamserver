@@ -34,6 +34,10 @@ exports.bookPackage = asyncHandler(async (req, res, next) => {
       }
     : undefined;
 
+  const walkInExpiresAt = collectionType === 'walk_in'
+    ? new Date(Date.now() + 48 * 60 * 60 * 1000)
+    : undefined;
+
   const request = await DiagnosticsRequest.create({
     patient:           req.user._id,
     tests:             pkg.includedTests,
@@ -44,6 +48,7 @@ exports.bookPackage = asyncHandler(async (req, res, next) => {
     notes:             notes || `Booked via "${pkg.name}" wellness package.`,
     wellnessPackage:   pkg._id,
     pickupLocation,
+    walkInExpiresAt,
   });
 
   if (transferReference) {
@@ -63,7 +68,7 @@ exports.bookPackage = asyncHandler(async (req, res, next) => {
     type:   'lab_request_placed',
     title:  'Wellness Package Booked',
     message: collectionType === 'walk_in'
-      ? `Your "${pkg.name}" package has been booked. Visit the assigned lab and pay at the counter.`
+      ? `Your "${pkg.name}" package has been booked. Visit the assigned lab for sample collection.`
       : `Your "${pkg.name}" package has been booked. Our team will contact you to schedule your home visit.`,
     metadata: { requestId: request._id },
   }).catch(() => {});

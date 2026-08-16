@@ -58,6 +58,17 @@ exports.book = asyncHandler(async (req, res, next) => {
     sessionDurationMinutes: durationMin,
   });
 
+  const doctorUser = await User.findById(doctorId).select('name').lean();
+
+  // Notify patient (in-app)
+  createNotification({
+    userId: req.user._id,
+    type: 'appointment_booked',
+    title: 'Appointment Booked',
+    message: `Your ${type} appointment with Dr. ${doctorUser?.name || 'your doctor'} has been booked. Awaiting payment confirmation.`,
+    metadata: { appointmentId: appointment._id },
+  }).catch(() => {});
+
   // Notify doctor (in-app + email)
   await createNotification({
     userId: doctorId,
@@ -69,7 +80,6 @@ exports.book = asyncHandler(async (req, res, next) => {
   });
 
   // Send patient a booking confirmation email
-  const doctorUser = await User.findById(doctorId).select('name').lean();
   sendAppointmentBookedPatientEmail({
     patientEmail: req.user.email,
     patientName: req.user.name,

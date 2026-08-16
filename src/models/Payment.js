@@ -13,7 +13,7 @@ const paymentSchema = new mongoose.Schema(
     },
     method: {
       type: String,
-      enum: ['paystack', 'direct_transfer', 'walk_in_cash'],
+      enum: ['paystack', 'direct_transfer', 'walk_in_cash', 'pos'],
       default: 'paystack',
     },
     serviceRef: { type: mongoose.Schema.Types.ObjectId },
@@ -23,8 +23,10 @@ const paymentSchema = new mongoose.Schema(
       enum: ['pending', 'success', 'failed', 'refunded'],
       default: 'pending',
     },
-    transferReference: { type: String },
-    adminNotes:        { type: String },
+    transferReference:  { type: String },
+    adminNotes:         { type: String },
+    refundRequested:    { type: Boolean, default: false },
+    refundReason:       { type: String },
   },
   { timestamps: true }
 );

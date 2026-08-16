@@ -40,6 +40,7 @@ router.put('/pharmacy/:id/status', audit('update_pharmacy_status', 'PharmacyPart
 // Lab management
 router.get('/labs', ctrl.getLabs);
 router.post('/labs', audit('create_lab', 'LabPartner'), ctrl.createLab);
+router.post('/labs/:id/impersonate', audit('impersonate_lab', 'LabPartner'), ctrl.impersonateLab);
 router.put('/labs/:id/status', audit('update_lab_status', 'LabPartner'), ctrl.updateLabStatus);
 router.put('/labs/:id/tests', audit('update_lab_tests', 'LabPartner'), ctrl.updateLabTests);
 

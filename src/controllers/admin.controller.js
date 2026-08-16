@@ -54,20 +54,30 @@ const AppError = require('../utils/AppError');
 const asyncHandler = require('../utils/asyncHandler');
 
 exports.getDashboard = asyncHandler(async (req, res) => {
-  const [totalUsers, totalDoctors, totalAppointments, totalRevenue, activeSubscriptions] =
+  const [totalUsers, totalDoctors, totalAppointments, revenueByType, activeSubscriptions] =
     await Promise.all([
       User.countDocuments(),
       Doctor.countDocuments({ isApproved: true }),
       Appointment.countDocuments(),
-      Payment.aggregate([{ $match: { status: 'success' } }, { $group: { _id: null, total: { $sum: '$amount' } } }]),
+      Payment.aggregate([
+        { $match: { status: 'success' } },
+        { $group: { _id: '$type', total: { $sum: '$amount' } } },
+      ]),
       Subscription.countDocuments({ status: 'active' }),
     ]);
+
+  const revenue = { total: 0, consultation: 0, pharmacy: 0, lab_test: 0, subscription: 0, wellness_package: 0 };
+  for (const r of revenueByType) {
+    revenue.total += r.total;
+    if (r._id && r._id in revenue) revenue[r._id] = r.total;
+  }
 
   sendSuccess(res, 200, 'Dashboard stats retrieved.', {
     totalUsers,
     totalDoctors,
     totalAppointments,
-    totalRevenue: totalRevenue[0]?.total || 0,
+    totalRevenue: revenue.total,
+    revenue,
     activeSubscriptions,
   });
 });
@@ -589,13 +599,36 @@ exports.updateLabStatus = asyncHandler(async (req, res, next) => {
 
 // ─── Diagnostics management ─────────────────────────────
 exports.getDiagnosticsRequests = asyncHandler(async (req, res) => {
-  const { status, page = 1, limit = 20 } = req.query;
+  const { status, page = 1, limit = 20, search } = req.query;
   const filter = {};
   if (status) filter.status = status;
+
+  if (search && search.trim()) {
+    const q = search.trim();
+    const isObjectId = /^[0-9a-f]{24}$/i.test(q);
+    if (isObjectId) {
+      // Match request ID, patient user ID, or payment/transaction ID
+      filter.$or = [{ _id: q }, { patient: q }, { paymentRef: q }];
+    } else {
+      // Search by patient name, email, or phone
+      const patients = await User.find({
+        $or: [
+          { name: { $regex: q, $options: 'i' } },
+          { email: { $regex: q, $options: 'i' } },
+          { phone: { $regex: q, $options: 'i' } },
+        ],
+      }, '_id').lean();
+      if (!patients.length) {
+        return sendSuccess(res, 200, 'No matching requests found.', { requests: [], total: 0 });
+      }
+      filter.patient = { $in: patients.map(p => p._id) };
+    }
+  }
 
   const requests = await DiagnosticsRequest.find(filter)
     .populate('patient', 'name email phone')
     .populate('lab', 'name address phone')
+    .populate({ path: 'paymentRef', select: 'status amount reference' })
     .sort({ createdAt: -1 })
     .skip((page - 1) * limit)
     .limit(Number(limit));
@@ -669,6 +702,9 @@ exports.getPublicContent = asyncHandler(async (req, res) => {
     WellnessPackage.find({ isActive: true }).sort({ order: 1, name: 1 }).select('-__v'),
   ]);
 
+  // Re-fetch only paystackPublicKey to avoid over-fetching above
+  const pkSettings = await PlatformSettings.findOne().select('paystackPublicKey').lean();
+
   sendSuccess(res, 200, 'Public content retrieved.', {
     healthTips: settings.healthTips ?? [],
     announcement: settings.announcement ?? '',
@@ -677,6 +713,7 @@ exports.getPublicContent = asyncHandler(async (req, res) => {
     plans,
     labTests,
     wellnessPackages,
+    paystackPublicKey: pkSettings?.paystackPublicKey ?? '',
   });
 });
 
@@ -972,6 +1009,26 @@ exports.createLab = asyncHandler(async (req, res, next) => {
     .catch(err => console.error('[Email] Lab account created:', err.message));
 
   sendSuccess(res, 201, 'Lab account created.', { user, lab });
+});
+
+// Admin opens a lab's dashboard without requiring the lab to log in separately.
+// Returns a short-lived token (4 h) for that lab's user account.
+exports.impersonateLab = asyncHandler(async (req, res, next) => {
+  const { signAccessToken } = require('../utils/jwt');
+  const lab = await LabPartner.findById(req.params.id).populate('user', '_id name email role isActive');
+  if (!lab) return next(new AppError('Lab not found.', 404));
+  if (!lab.user) return next(new AppError('Lab has no user account.', 404));
+  if (!lab.user.isActive) return next(new AppError('Lab user account is inactive.', 403));
+
+  // Sign a 4-hour token for the lab user; mark as impersonated for audit purposes
+  const token = signAccessToken({ id: lab.user._id, impersonatedBy: req.user._id });
+
+  const clientUrl = process.env.CLIENT_URL || 'http://localhost:3000';
+  sendSuccess(res, 200, 'Impersonation token generated.', {
+    token,
+    labName: lab.name,
+    url: `${clientUrl}/lab?token=${token}`,
+  });
 });
 
 exports.createPharmacy = asyncHandler(async (req, res, next) => {

@@ -125,39 +125,33 @@ app.all('/{*path}', (req, res, next) => {
 
 // Global error handler
 app.use((err, req, res, next) => {
-  const statusCode = err.statusCode || 500
-  const status = err.status || 'error'
+  // Normalise known error types first (so dev mode also gets correct status codes)
 
-  if (process.env.NODE_ENV === 'development') {
-    return res
-      .status(statusCode)
-      .json({ status, message: err.message, stack: err.stack })
+  // JWT errors
+  if (err.name === 'JsonWebTokenError') {
+    return res.status(401).json({ status: 'fail', message: 'Invalid token. Please log in again.' })
+  }
+  if (err.name === 'TokenExpiredError') {
+    return res.status(401).json({ status: 'fail', message: 'Token expired. Please log in again.' })
   }
 
   // Mongoose duplicate key
   if (err.code === 11000) {
-    const field = Object.keys(err.keyValue)[0]
-    return res
-      .status(409)
-      .json({ status: 'fail', message: `${field} already in use.` })
+    const field = Object.keys(err.keyValue || {})[0] || 'field'
+    return res.status(409).json({ status: 'fail', message: `${field} already in use.` })
   }
 
   // Mongoose validation error
   if (err.name === 'ValidationError') {
-    const message = Object.values(err.errors)
-      .map(e => e.message)
-      .join('. ')
+    const message = Object.values(err.errors).map(e => e.message).join('. ')
     return res.status(400).json({ status: 'fail', message })
   }
 
-  // JWT errors
-  if (err.name === 'JsonWebTokenError') {
-    return res.status(401).json({ status: 'fail', message: 'Invalid token.' })
-  }
-  if (err.name === 'TokenExpiredError') {
-    return res
-      .status(401)
-      .json({ status: 'fail', message: 'Token expired. Please log in again.' })
+  const statusCode = err.statusCode || 500
+  const status = err.status || 'error'
+
+  if (process.env.NODE_ENV === 'development') {
+    return res.status(statusCode).json({ status, message: err.message, stack: err.stack })
   }
 
   if (err.isOperational) {

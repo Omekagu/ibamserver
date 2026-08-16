@@ -10,10 +10,12 @@ const diagnosticsRequestSchema = new mongoose.Schema(
     fieldAgent: { type: mongoose.Schema.Types.ObjectId, ref: 'FieldAgent' },
     status: {
       type: String,
-      enum: ['pending', 'assigned', 'sample_collected', 'processing', 'completed', 'cancelled'],
+      enum: ['pending', 'assigned', 'sample_collected', 'processing', 'completed', 'cancelled', 'no_show', 'expired'],
       default: 'pending',
     },
     totalAmount: { type: Number, default: 0 },
+    walkInExpiresAt: { type: Date },
+    noShowAt: { type: Date },
     externalReferralUrl: { type: String },
     requiresApproval: { type: Boolean, default: false },
     adminApprovalStatus: {
@@ -30,6 +32,8 @@ const diagnosticsRequestSchema = new mongoose.Schema(
       lat: { type: Number },
       lng: { type: Number },
     },
+    preferredDate: { type: Date },
+    preferredTime: { type: String }, // e.g. "09:00"
   },
   { timestamps: true }
 );

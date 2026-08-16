@@ -71,6 +71,7 @@ exports.initiate = asyncHandler(async (req, res, next) => {
     paymentId: payment._id,
     reference,
     authorizationUrl: paystackData.authorization_url,
+    accessCode: paystackData.access_code,
   });
 });
 
@@ -182,6 +183,30 @@ exports.webhook = asyncHandler(async (req, res) => {
     }
   }
   res.sendStatus(200);
+});
+
+exports.requestRefund = asyncHandler(async (req, res, next) => {
+  const { paymentId, reason } = req.body;
+  if (!reason?.trim()) return next(new AppError('A reason is required for the refund request.', 400));
+
+  const payment = await Payment.findOne({ _id: paymentId, user: req.user._id });
+  if (!payment) return next(new AppError('Payment not found.', 404));
+  if (payment.status !== 'success') return next(new AppError('Only successful payments can be refunded.', 400));
+  if (payment.refundRequested) return next(new AppError('A refund has already been requested for this payment.', 400));
+
+  payment.refundRequested = true;
+  payment.refundReason = reason.trim();
+  await payment.save();
+
+  const { notifyAdmins } = require('../services/notification.service');
+  notifyAdmins({
+    type: 'refund_requested',
+    title: 'Refund Request',
+    message: `${req.user.name || 'A patient'} requested a refund of ₦${(payment.amount / 100).toLocaleString()} (${payment.type}). Reason: ${reason.trim()}`,
+    metadata: { paymentId: payment._id, userId: req.user._id, amount: payment.amount, type: payment.type },
+  }).catch(() => {});
+
+  sendSuccess(res, 200, 'Refund request submitted. Our team will review within 24–48 hours.', {});
 });
 
 exports.getMine = asyncHandler(async (req, res) => {

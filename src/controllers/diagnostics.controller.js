@@ -6,6 +6,7 @@ const Payment = require('../models/Payment');
 const FieldAgent = require('../models/FieldAgent');
 const HomeVisitSchedule = require('../models/HomeVisitSchedule');
 const User = require('../models/User');
+require('../models/WellnessPackage'); // ensure model registered for populate
 const { uploadBuffer } = require('../services/cloudinary.service');
 const { createNotification, notifyAdmins } = require('../services/notification.service');
 const { sendAdminAlertEmail } = require('../services/email.service');
@@ -96,26 +97,18 @@ exports.requestTests = asyncHandler(async (req, res, next) => {
   // Support both JSON body (tests: [...]) and FormData (tests[]: ...)
   const rawTests = req.body['tests[]'] || req.body.tests;
   const tests = Array.isArray(rawTests) ? rawTests : rawTests ? [rawTests] : [];
-  const { labId, collectionType, notes, doctorId } = req.body;
+  const { collectionType, notes, preferredDate, preferredTime } = req.body;
+  const clientAmount = req.body.amount ? Number(req.body.amount) : 0;
+
   if (!tests.length || !collectionType) {
     return next(new AppError('tests array and collectionType are required.', 400));
   }
 
-  let totalAmount = 0;
-  let externalReferralUrl;
-  let selectedLab = null;
-  const fromDoctor = req.user.role === 'doctor' ? req.user._id : doctorId;
-  const requiresApproval = !fromDoctor;
-
-  if (labId) {
-    selectedLab = await LabPartner.findById(labId);
-    if (selectedLab?.testsOffered?.length) {
-      for (const testName of tests) {
-        const found = selectedLab.testsOffered.find(t => t.name === testName);
-        if (found) totalAmount += found.price;
-      }
-    }
+  if (collectionType === 'home_visit' && !req.body.pickupLocation && !req.body['pickupLocation']) {
+    // address is mandatory for home visits (validated on client; be lenient here)
   }
+
+  let externalReferralUrl;
 
   if (req.file) {
     const uploaded = await uploadBuffer(req.file.buffer, 'referrals', 'auto');
@@ -123,63 +116,68 @@ exports.requestTests = asyncHandler(async (req, res, next) => {
   }
 
   let pickupLocation;
-  if (collectionType === 'walk_in') {
-    try { pickupLocation = req.body.pickupLocation ? JSON.parse(req.body.pickupLocation) : undefined; } catch { /* ignore */ }
-  }
+  try { pickupLocation = req.body.pickupLocation ? JSON.parse(req.body.pickupLocation) : undefined; } catch { /* ignore */ }
+
+  const walkInExpiresAt = collectionType === 'walk_in'
+    ? new Date(Date.now() + 48 * 60 * 60 * 1000)
+    : undefined;
 
   const request = await DiagnosticsRequest.create({
     patient: req.user._id,
-    doctor: fromDoctor || undefined,
     tests,
-    lab: labId || undefined,
     collectionType,
     notes,
-    totalAmount,
-    requiresApproval,
-    adminApprovalStatus: requiresApproval ? 'pending' : 'na',
+    totalAmount: clientAmount,
+    requiresApproval: false,
+    adminApprovalStatus: 'na',
     externalReferralUrl,
     pickupLocation,
+    walkInExpiresAt,
+    ...(collectionType === 'home_visit' && preferredDate ? { preferredDate: new Date(preferredDate) } : {}),
+    ...(collectionType === 'home_visit' && preferredTime ? { preferredTime } : {}),
   });
 
+  // Notify patient
   createNotification({
     userId: req.user._id,
     type: 'lab_request_placed',
     title: 'Lab Test Request Submitted',
-    message: requiresApproval
-      ? `Your request for ${tests.slice(0, 2).join(', ')}${tests.length > 2 ? ` +${tests.length - 2} more` : ''} is awaiting admin approval.`
-      : `Your lab test request has been submitted. We will process it shortly.`,
+    message: `Your request for ${tests.slice(0, 2).join(', ')}${tests.length > 2 ? ` +${tests.length - 2} more` : ''} has been submitted. Our lab team will process it shortly.`,
     metadata: { requestId: request._id },
     emailData: { tests, collectionType },
   }).catch(err => console.error('[Notification] Lab request placed:', err.message));
 
-  // Notify admin (email + in-app) about the new lab test request
+  // Notify all active labs so any can pick up the request
+  const activeLabs = await LabPartner.find({ status: 'active' }, 'user').lean();
+  for (const lab of activeLabs) {
+    if (lab.user) {
+      createNotification({
+        userId: lab.user,
+        type: 'lab_request_placed',
+        title: 'New Lab Request Available',
+        message: `New ${collectionType === 'home_visit' ? 'home visit' : 'walk-in'} request: ${tests.slice(0, 2).join(', ')}${tests.length > 2 ? ` +${tests.length - 2} more` : ''}. Open your lab portal to process it.`,
+        metadata: { requestId: request._id },
+      }).catch(() => {});
+    }
+  }
+
+  // Notify admin
   sendAdminAlertEmail({
-    subject: requiresApproval ? 'New lab test request awaiting approval' : 'New lab test request submitted',
+    subject: 'New lab test request submitted',
     headline: 'New Lab Test Request',
-    body: `${req.user.name || 'A patient'} submitted a lab test request for: ${tests.slice(0, 3).join(', ')}${tests.length > 3 ? ` +${tests.length - 3} more` : ''}.${requiresApproval ? ' This request requires admin approval before processing.' : ''}`,
-    ctaLabel: requiresApproval ? 'Review Approvals' : 'View Requests',
-    ctaUrl: `${process.env.CLIENT_URL || 'https://ibamhealth.com'}/admin/diagnostics`,
+    body: `${req.user.name || 'A patient'} submitted a lab test request for: ${tests.slice(0, 3).join(', ')}${tests.length > 3 ? ` +${tests.length - 3} more` : ''}.${collectionType === 'home_visit' && preferredDate ? ` Preferred visit: ${preferredDate}${preferredTime ? ' at ' + preferredTime : ''}.` : ''}`,
+    ctaLabel: 'View Lab Portal',
+    ctaUrl: `${process.env.CLIENT_URL || 'https://ibamhealth.com'}/lab`,
   }).catch(err => console.error('[Email] Admin lab test alert:', err.message));
 
   notifyAdmins({
     type: 'lab_request_placed',
-    title: requiresApproval ? 'Lab Request Awaiting Approval' : 'New Lab Test Request',
-    message: `${req.user.name || 'A patient'} requested: ${tests.slice(0, 2).join(', ')}${tests.length > 2 ? ` +${tests.length - 2} more` : ''}.${requiresApproval ? ' Requires admin approval.' : ''}`,
-    metadata: { requestId: request._id, patientId: req.user._id, requiresApproval },
+    title: 'New Lab Test Request',
+    message: `${req.user.name || 'A patient'} requested: ${tests.slice(0, 2).join(', ')}${tests.length > 2 ? ` +${tests.length - 2} more` : ''}.`,
+    metadata: { requestId: request._id, patientId: req.user._id },
   }).catch(() => {});
 
-  // Notify lab partner if one was selected
-  if (selectedLab?.user) {
-    createNotification({
-      userId: selectedLab.user,
-      type: 'lab_request_placed',
-      title: 'New Test Request',
-      message: `A patient has requested: ${tests.slice(0, 2).join(', ')}${tests.length > 2 ? ` +${tests.length - 2} more` : ''}.`,
-      metadata: { requestId: request._id },
-    }).catch(err => console.error('[Notification] Lab partner notification:', err.message));
-  }
-
-  sendSuccess(res, 201, 'Diagnostics request submitted.', { request, requiresApproval });
+  sendSuccess(res, 201, 'Diagnostics request submitted.', { request });
 });
 
 exports.listLabs = asyncHandler(async (req, res) => {
@@ -189,12 +187,49 @@ exports.listLabs = asyncHandler(async (req, res) => {
 
 exports.getLabRequests = asyncHandler(async (req, res) => {
   const lab = await LabPartner.findOne({ user: req.user._id });
-  if (!lab) return sendSuccess(res, 200, 'No requests.', { requests: [] });
+  if (!lab) return sendSuccess(res, 200, 'No requests.', { available: [], mine: [] });
 
-  const requests = await DiagnosticsRequest.find({ lab: lab._id })
-    .populate('patient', 'name phone email')
-    .sort({ createdAt: -1 });
-  sendSuccess(res, 200, 'Lab requests retrieved.', { requests });
+  // Available: pending requests not yet claimed by any lab
+  const available = await DiagnosticsRequest.find({
+    lab: { $exists: false },
+    status: 'pending',
+  })
+    .populate('patient', 'name phone email _id')
+    .populate({ path: 'paymentRef', select: 'status amount method reference' })
+    .sort({ createdAt: -1 })
+    .lean();
+
+  // Mine: requests this lab has claimed / is processing
+  const mine = await DiagnosticsRequest.find({ lab: lab._id })
+    .populate('patient', 'name phone email _id')
+    .populate({ path: 'paymentRef', select: 'status amount method reference' })
+    .sort({ createdAt: -1 })
+    .lean();
+
+  sendSuccess(res, 200, 'Lab requests retrieved.', { available, mine });
+});
+
+// Lab claims an unassigned pending request
+exports.claimRequest = asyncHandler(async (req, res, next) => {
+  const lab = await LabPartner.findOne({ user: req.user._id });
+  if (!lab) return next(new AppError('Lab partner record not found.', 404));
+
+  const request = await DiagnosticsRequest.findOne({ _id: req.params.id, status: 'pending', lab: { $exists: false } });
+  if (!request) return next(new AppError('Request not found or already claimed.', 404));
+
+  request.lab = lab._id;
+  request.status = 'assigned';
+  await request.save();
+
+  createNotification({
+    userId: request.patient,
+    type: 'lab_request_placed',
+    title: 'Lab Request Picked Up',
+    message: `${lab.name} has picked up your lab request and will process it shortly.${request.collectionType === 'home_visit' ? ' They will contact you to confirm your home visit schedule.' : ''}`,
+    metadata: { requestId: request._id },
+  }).catch(() => {});
+
+  sendSuccess(res, 200, 'Request claimed successfully.', { request });
 });
 
 exports.assignLab = asyncHandler(async (req, res, next) => {
@@ -239,11 +274,24 @@ exports.uploadResult = asyncHandler(async (req, res, next) => {
 exports.getMyResults = asyncHandler(async (req, res) => {
   const requests = await DiagnosticsRequest.find({ patient: req.user._id })
     .populate('lab', 'name')
+    .populate('wellnessPackage', 'name')
+    .populate({ path: 'paymentRef', select: 'amount method status transferReference reference createdAt' })
     .sort({ createdAt: -1 });
 
   const requestIds = requests.map((r) => r._id);
-  const results = await LabResult.find({ request: { $in: requestIds } });
-  sendSuccess(res, 200, 'Results retrieved.', { requests, results });
+  const labResults = await LabResult.find({ request: { $in: requestIds } }).lean();
+
+  const resultMap = {};
+  for (const lr of labResults) resultMap[lr.request.toString()] = lr;
+
+  const enriched = requests.map(r => {
+    const obj = r.toObject();
+    const lr = resultMap[r._id.toString()];
+    if (lr) obj.result = { fileUrl: lr.fileUrl, notes: lr.notes, createdAt: lr.createdAt };
+    return obj;
+  });
+
+  sendSuccess(res, 200, 'Results retrieved.', { requests: enriched });
 });
 
 exports.scheduleHomeVisit = asyncHandler(async (req, res, next) => {
@@ -286,6 +334,8 @@ exports.scheduleHomeVisit = asyncHandler(async (req, res, next) => {
 });
 
 exports.markSampleCollected = asyncHandler(async (req, res, next) => {
+  const { paymentMethod, transferReference } = req.body;
+
   const visit = await HomeVisitSchedule.findOne({ request: req.params.id });
   if (!visit) return next(new AppError('Home visit not found.', 404));
 
@@ -299,6 +349,26 @@ exports.markSampleCollected = asyncHandler(async (req, res, next) => {
 
   const request = await DiagnosticsRequest.findById(req.params.id);
   request.status = 'sample_collected';
+
+  // Record on-spot payment collected by the field agent
+  if (!request.paymentRef && request.totalAmount > 0 && paymentMethod) {
+    const validMethods = ['walk_in_cash', 'direct_transfer', 'pos'];
+    if (validMethods.includes(paymentMethod)) {
+      const reference = `ibam_hv_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
+      const payment = await Payment.create({
+        user:       request.patient,
+        amount:     request.totalAmount * 100,
+        reference,
+        type:       request.wellnessPackage ? 'wellness_package' : 'lab_test',
+        method:     paymentMethod,
+        serviceRef: request._id,
+        status:     paymentMethod === 'direct_transfer' ? 'pending' : 'success',
+        ...(transferReference ? { transferReference } : {}),
+      });
+      request.paymentRef = payment._id;
+    }
+  }
+
   await request.save();
 
   if (agent) { agent.status = 'available'; await agent.save(); }
@@ -316,33 +386,61 @@ exports.markSampleCollected = asyncHandler(async (req, res, next) => {
 });
 
 exports.updateLabRequestStatus = asyncHandler(async (req, res, next) => {
-  const { status, resultNotes } = req.body;
+  const { status, resultNotes, paymentMethod, transferReference } = req.body;
   const lab = await LabPartner.findOne({ user: req.user._id });
   if (!lab) return next(new AppError('Lab partner record not found.', 404));
 
-  const request = await DiagnosticsRequest.findOne({ _id: req.params.id, lab: lab._id });
+  const request = await DiagnosticsRequest.findOne({ _id: req.params.id, lab: lab._id }).populate('patient', 'name');
   if (!request) return next(new AppError('Request not found.', 404));
 
-  const allowed = ['assigned', 'collected', 'completed'];
+  const allowed = ['assigned', 'collected', 'completed', 'no_show'];
   if (!allowed.includes(status)) return next(new AppError(`Status must be one of: ${allowed.join(', ')}.`, 400));
 
-  // When a lab partner marks a walk-in request as assigned (= patient arrived and paid),
-  // record the cash payment for the audit trail
+  if (status === 'no_show') {
+    request.status = 'no_show';
+    request.noShowAt = new Date();
+    await request.save();
+
+    createNotification({
+      userId: request.patient,
+      type:   'lab_request_placed',
+      title:  'Walk-in Marked as No Show',
+      message: 'You were marked as a no-show for your lab test walk-in. Please contact us to reschedule.',
+      metadata: { requestId: request._id },
+    }).catch(() => {});
+
+    notifyAdmins({
+      type:    'lab_request_placed',
+      title:   'Walk-in No Show',
+      message: `A patient did not show up for their walk-in lab test (Request #${request._id}).`,
+      metadata: { requestId: request._id },
+    }).catch(() => {});
+
+    return sendSuccess(res, 200, 'Request marked as no show.', { request });
+  }
+
+  // Record on-spot payment when home visit sample is collected
   if (
-    status === 'assigned' &&
-    request.collectionType === 'walk_in' &&
+    status === 'collected' &&
+    request.collectionType === 'home_visit' &&
     !request.paymentRef &&
-    request.totalAmount > 0
+    request.totalAmount > 0 &&
+    paymentMethod
   ) {
-    const reference = `ibam_wil_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
+    const validMethods = ['walk_in_cash', 'direct_transfer', 'pos'];
+    if (!validMethods.includes(paymentMethod)) {
+      return next(new AppError('paymentMethod must be walk_in_cash, direct_transfer, or pos.', 400));
+    }
+    const reference = `ibam_hv_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
     const payment = await Payment.create({
-      user:       request.patient,
-      amount:     request.totalAmount * 100,
+      user:              request.patient,
+      amount:            request.totalAmount * 100,
       reference,
-      type:       'lab_test',
-      method:     'walk_in_cash',
-      serviceRef: request._id,
-      status:     'success',
+      type:              request.wellnessPackage ? 'wellness_package' : 'lab_test',
+      method:            paymentMethod,
+      serviceRef:        request._id,
+      status:            paymentMethod === 'direct_transfer' ? 'pending' : 'success',
+      ...(transferReference ? { transferReference } : {}),
     });
     request.paymentRef = payment._id;
   }
