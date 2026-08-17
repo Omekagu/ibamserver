@@ -6,12 +6,14 @@ const upload = require('../middleware/upload');
 
 router.post('/onboard', ctrl.onboard);
 router.get('/partners', ctrl.listPartners);
+router.get('/drugs/search', ctrl.searchDrugs);
 router.get('/:id/catalog', ctrl.getPublicCatalog);
 
 router.use(protect);
 
 router.get('/profile', restrictTo('pharmacy_partner'), ctrl.getPharmacyProfile);
 router.put('/profile', restrictTo('pharmacy_partner'), ctrl.updatePharmacyProfile);
+router.post('/profile/logo', restrictTo('pharmacy_partner'), upload.single('logo'), ctrl.uploadPharmacyLogo);
 router.get('/catalog', restrictTo('pharmacy_partner'), ctrl.getOwnCatalog);
 router.put('/catalog', restrictTo('pharmacy_partner'), ctrl.updateCatalog);
 

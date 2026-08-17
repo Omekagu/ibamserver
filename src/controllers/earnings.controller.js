@@ -1,4 +1,5 @@
 const DoctorEarning = require('../models/DoctorEarning');
+const Doctor = require('../models/Doctor');
 const { notifyAdmins } = require('../services/notification.service');
 const { sendAdminAlertEmail } = require('../services/email.service');
 const { sendSuccess } = require('../utils/response');
@@ -24,6 +25,22 @@ exports.getEarnings = asyncHandler(async (req, res) => {
 });
 
 exports.requestPayout = asyncHandler(async (req, res, next) => {
+  const doctorProfile = await Doctor.findOne({ user: req.user._id }).lean();
+
+  if (!doctorProfile?.isApproved) {
+    return next(new AppError(
+      'Your account has not been approved yet. Payouts are only available to fully verified doctors. Contact support if you believe this is an error.',
+      403
+    ));
+  }
+
+  if (!doctorProfile.bankAccount?.accountNumber || !doctorProfile.bankAccount?.bankCode) {
+    return next(new AppError(
+      'Please add your bank account details in your profile before requesting a payout.',
+      400
+    ));
+  }
+
   const pendingEarnings = await DoctorEarning.find({ doctor: req.user._id, payoutStatus: 'pending' });
   if (!pendingEarnings.length) return next(new AppError('No pending earnings to pay out.', 400));
 

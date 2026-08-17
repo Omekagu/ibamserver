@@ -18,6 +18,7 @@ router.get('/labs/earnings', restrictTo('lab_partner'), ctrl.getLabEarnings);
 router.post('/labs/earnings/request-payout', restrictTo('lab_partner'), ctrl.requestLabPayout);
 router.put('/labs/requests/:id/status', restrictTo('lab_partner'), ctrl.updateLabRequestStatus);
 
+router.post('/doctor-order', restrictTo('doctor'), ctrl.requestTestsForPatient)
 router.post('/request', upload.single('referral'), ctrl.requestTests);
 router.get('/results/mine', ctrl.getMyResults);
 router.get('/field-agent/schedule', restrictTo('field_agent'), ctrl.getAgentSchedule);

@@ -20,6 +20,9 @@ exports.startConsultation = asyncHandler(async (req, res, next) => {
   if (appointment.doctor.toString() !== req.user._id.toString()) {
     return next(new AppError('Only the assigned doctor can start this consultation.', 403));
   }
+  if (appointment.status !== 'confirmed') {
+    return next(new AppError('This appointment is pending payment and cannot be started.', 400));
+  }
 
   const existing = await Consultation.findOne({ appointment: appointmentId });
   if (existing) return sendSuccess(res, 200, 'Consultation already exists.', { consultation: existing });
@@ -54,7 +57,7 @@ exports.startConsultation = asyncHandler(async (req, res, next) => {
   sendSuccess(res, 201, 'Consultation started.', { consultation });
 });
 
-exports.getByAppointment = asyncHandler(async (req, res, next) => {
+exports.getByAppointment = asyncHandler(async (req, res) => {
   const consultation = await Consultation.findOne({ appointment: req.params.appointmentId })
     .populate({
       path: 'appointment',
@@ -63,8 +66,11 @@ exports.getByAppointment = asyncHandler(async (req, res, next) => {
         { path: 'doctor', select: 'name avatar' },
       ],
     });
-  if (!consultation) return next(new AppError('Consultation not started yet.', 404));
-  sendSuccess(res, 200, 'Consultation retrieved.', { consultation });
+  // Return 200 with null when not started yet so polling clients don't treat it as an error
+  sendSuccess(res, 200,
+    consultation ? 'Consultation retrieved.' : 'Consultation not started yet.',
+    { consultation: consultation ?? null }
+  );
 });
 
 exports.getMessages = asyncHandler(async (req, res, next) => {
@@ -106,7 +112,7 @@ exports.generateAgoraToken = asyncHandler(async (req, res, next) => {
 });
 
 exports.endConsultation = asyncHandler(async (req, res, next) => {
-  const { summary, soapNote } = req.body;
+  const { summary, soapNote, timedOut } = req.body;
   const consultation = await Consultation.findById(req.params.id).populate('appointment');
   if (!consultation) return next(new AppError('Consultation not found.', 404));
 
@@ -118,6 +124,7 @@ exports.endConsultation = asyncHandler(async (req, res, next) => {
   consultation.status = 'ended';
   consultation.endedAt = new Date();
   consultation.duration = Math.ceil(durationMs / 60000);
+  if (timedOut) consultation.timedOut = true;
   if (summary) consultation.summary = summary;
   if (soapNote) consultation.soapNote = soapNote;
   await consultation.save();
@@ -126,16 +133,19 @@ exports.endConsultation = asyncHandler(async (req, res, next) => {
   appt.status = 'completed';
   await appt.save();
 
-  // Record doctor earnings
+  // Record doctor earnings — guard against duplicate if endpoint is hit twice (e.g. timeout + manual end)
   if (appt.consultationFee > 0) {
-    const platformCut = (appt.consultationFee * PLATFORM_CUT_PERCENT) / 100;
-    await DoctorEarning.create({
-      doctor: appt.doctor,
-      consultation: consultation._id,
-      grossAmount: appt.consultationFee,
-      platformCut,
-      netAmount: appt.consultationFee - platformCut,
-    });
+    const alreadyEarned = await DoctorEarning.findOne({ consultation: consultation._id });
+    if (!alreadyEarned) {
+      const platformCut = (appt.consultationFee * PLATFORM_CUT_PERCENT) / 100;
+      await DoctorEarning.create({
+        doctor: appt.doctor,
+        consultation: consultation._id,
+        grossAmount: appt.consultationFee,
+        platformCut,
+        netAmount: appt.consultationFee - platformCut,
+      });
+    }
   }
 
   await createNotification({

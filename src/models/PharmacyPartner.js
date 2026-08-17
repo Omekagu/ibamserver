@@ -34,6 +34,7 @@ const pharmacyPartnerSchema = new mongoose.Schema(
     cacNumber: { type: String },
     cacVerified: { type: Boolean, default: false },
     cacRegisteredName: { type: String },
+    logo: { type: String },
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     bankAccount: {
       bankName:      { type: String },

@@ -25,6 +25,7 @@ const diagnosticsRequestSchema = new mongoose.Schema(
     },
     wellnessPackage: { type: mongoose.Schema.Types.ObjectId, ref: 'WellnessPackage' },
     paymentRef: { type: mongoose.Schema.Types.ObjectId, ref: 'Payment' },
+    consultation: { type: mongoose.Schema.Types.ObjectId, ref: 'Consultation' },
     notes: { type: String },
     resultNotes: { type: String },
     pickupLocation: {

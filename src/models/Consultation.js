@@ -20,6 +20,7 @@ const consultationSchema = new mongoose.Schema(
     startedAt: { type: Date, default: Date.now },
     endedAt: { type: Date },
     duration: { type: Number }, // minutes
+    timedOut: { type: Boolean, default: false }, // true when session ended by clock expiry
     soapNote: soapNoteSchema,
     summary: { type: String },
   },

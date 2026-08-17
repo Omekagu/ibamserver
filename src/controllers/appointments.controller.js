@@ -2,14 +2,17 @@ const Appointment = require('../models/Appointment');
 const Availability = require('../models/Availability');
 const Doctor = require('../models/Doctor');
 const User = require('../models/User');
-const { createNotification, notifyAdmins } = require('../services/notification.service');
-const { sendAppointmentBookedPatientEmail } = require('../services/email.service');
+const { createNotification } = require('../services/notification.service');
 const { sendSuccess } = require('../utils/response');
 const AppError = require('../utils/AppError');
 const asyncHandler = require('../utils/asyncHandler');
 
 exports.book = asyncHandler(async (req, res, next) => {
   const { doctorId, scheduledAt, type, triageRef, availabilityId, slotId, isUrgent, sessionDurationMinutes } = req.body;
+
+  if (new Date(scheduledAt) <= new Date()) {
+    return next(new AppError('Cannot book a time slot that has already passed.', 400));
+  }
 
   const doctor = await Doctor.findOne({ user: doctorId, isApproved: true });
   if (!doctor) return next(new AppError('Doctor not found or not approved.', 404));
@@ -56,6 +59,8 @@ exports.book = asyncHandler(async (req, res, next) => {
     consultationFee,
     isUrgent: Boolean(isUrgent),
     sessionDurationMinutes: durationMin,
+    // Free appointments are confirmed immediately; paid ones wait for payment verification
+    status: consultationFee === 0 ? 'confirmed' : 'pending',
   });
 
   const doctorUser = await User.findById(doctorId).select('name').lean();
@@ -69,31 +74,17 @@ exports.book = asyncHandler(async (req, res, next) => {
     metadata: { appointmentId: appointment._id },
   }).catch(() => {});
 
-  // Notify doctor (in-app + email)
-  await createNotification({
-    userId: doctorId,
-    type: 'appointment_booked',
-    title: 'New Appointment Booked',
-    message: `A patient has booked a ${type} appointment with you.`,
-    metadata: { appointmentId: appointment._id },
-    emailData: { patientName: req.user.name, appointmentType: type, scheduledAt },
-  });
-
-  // Send patient a booking confirmation email
-  sendAppointmentBookedPatientEmail({
-    patientEmail: req.user.email,
-    patientName: req.user.name,
-    doctorName: doctorUser?.name || 'Doctor',
-    type,
-    scheduledAt,
-  }).catch(() => {});
-
-  notifyAdmins({
-    type: 'appointment_booked',
-    title: 'New Appointment Booked',
-    message: `${req.user.name} booked a ${type} appointment with Dr. ${doctorUser?.name || 'a doctor'}.`,
-    metadata: { appointmentId: appointment._id, patientId: req.user._id, doctorId },
-  }).catch(() => {});
+  // Only notify doctor immediately for free appointments (auto-confirmed).
+  // Paid appointments: doctor notification fires in payments.controller.js after payment succeeds.
+  if (consultationFee === 0) {
+    createNotification({
+      userId: doctorId,
+      type: 'appointment_confirmed',
+      title: 'New Appointment',
+      message: `A patient has booked a ${type} appointment with you.`,
+      metadata: { appointmentId: appointment._id },
+    }).catch(() => {});
+  }
 
   sendSuccess(res, 201, 'Appointment booked.', { appointment });
 });

@@ -9,7 +9,8 @@ const { initializeTransaction, verifyTransaction, createTransferRecipient, initi
 const PlatformSettings = require('../models/PlatformSettings');
 const PharmacyPartner = require('../models/PharmacyPartner');
 const LabPartner = require('../models/LabPartner');
-const { createNotification } = require('../services/notification.service');
+const { createNotification, notifyAdmins } = require('../services/notification.service');
+const { sendAdminAlertEmail, sendAppointmentBookedPatientEmail } = require('../services/email.service');
 const { sendSuccess } = require('../utils/response');
 const AppError = require('../utils/AppError');
 const asyncHandler = require('../utils/asyncHandler');
@@ -53,7 +54,7 @@ exports.initiate = asyncHandler(async (req, res, next) => {
 
   const payment = await Payment.create({
     user: req.user._id,
-    amount,
+    amount: amount * 100, // store in kobo; paystack.service already converts internally
     reference,
     type: paymentType,
     method: 'paystack',
@@ -92,15 +93,40 @@ exports.verify = asyncHandler(async (req, res, next) => {
         payment.serviceRef,
         { paymentRef: payment._id, status: 'confirmed' },
         { new: true }
-      );
-      // Ensure the slot stays marked as booked (defensive — book endpoint already does this)
+      ).populate('doctor', 'name');
       if (appt) {
+        const doctorId = appt.doctor?._id ?? appt.doctor;
+        const doctorName = appt.doctor?.name ?? 'Doctor';
         const scheduledDate = new Date(appt.scheduledAt);
         const slotTime = `${String(scheduledDate.getHours()).padStart(2, '0')}:${String(scheduledDate.getMinutes()).padStart(2, '0')}`;
         await Availability.findOneAndUpdate(
-          { doctor: appt.doctor, isActive: true, 'slots.startTime': slotTime },
+          { doctor: doctorId, isActive: true, 'slots.startTime': slotTime },
           { $set: { 'slots.$.isBooked': true } }
         );
+        // Doctor notification with email (fires after payment confirmed)
+        createNotification({
+          userId: doctorId,
+          type: 'appointment_confirmed',
+          title: 'Appointment Confirmed',
+          message: `${req.user.name}'s ${appt.type} appointment is confirmed. Payment received.`,
+          metadata: { appointmentId: appt._id },
+          emailData: { patientName: req.user.name, appointmentType: appt.type, scheduledAt: appt.scheduledAt },
+        }).catch(() => {});
+        // Patient confirmation email (fires after payment confirmed)
+        sendAppointmentBookedPatientEmail({
+          patientEmail: req.user.email,
+          patientName: req.user.name,
+          doctorName,
+          type: appt.type,
+          scheduledAt: appt.scheduledAt,
+        }).catch(() => {});
+        // Admin notification (fires after payment confirmed)
+        notifyAdmins({
+          type: 'appointment_booked',
+          title: 'New Appointment Confirmed',
+          message: `${req.user.name} confirmed a ${appt.type} appointment with Dr. ${doctorName}.`,
+          metadata: { appointmentId: appt._id, patientId: req.user._id, doctorId },
+        }).catch(() => {});
       }
     }
     if (payment.type === 'pharmacy' && payment.serviceRef) {
@@ -117,6 +143,30 @@ exports.verify = asyncHandler(async (req, res, next) => {
           serviceRef: payment.serviceRef, grossAmount: gross, platformCut: cut, netAmount: gross - cut,
         });
         tryAutoPartnerPayout(earning);
+        createNotification({
+          userId: order.pharmacy.user,
+          type: 'pharmacy_order_placed',
+          title: 'New Order Received',
+          message: `A patient has paid ₦${gross.toLocaleString('en-NG')} for an order. Please process it.`,
+          metadata: { orderId: payment.serviceRef },
+        }).catch(() => {});
+      }
+      // Admin notification (fires after payment confirmed, not at order creation)
+      if (order) {
+        const gross = payment.amount / 100;
+        sendAdminAlertEmail({
+          subject: `New pharmacy order paid — ${req.user.name}`,
+          headline: 'New Pharmacy Order Paid',
+          body: `${req.user.name} paid ₦${gross.toLocaleString('en-NG')} for an order${order.pharmacy?.name ? ` from ${order.pharmacy.name}` : ''}.`,
+          ctaLabel: 'View Orders',
+          ctaUrl: `${process.env.CLIENT_URL || 'https://ibamhealth.com'}/admin/orders`,
+        }).catch(() => {});
+        notifyAdmins({
+          type: 'pharmacy_order_placed',
+          title: 'New Pharmacy Order Paid',
+          message: `${req.user.name} paid for an order${order.pharmacy?.name ? ` from ${order.pharmacy.name}` : ''}.`,
+          metadata: { orderId: payment.serviceRef, patientId: req.user._id },
+        }).catch(() => {});
       }
     }
     if (payment.type === 'lab_test' && payment.serviceRef) {
@@ -133,6 +183,36 @@ exports.verify = asyncHandler(async (req, res, next) => {
           serviceRef: payment.serviceRef, grossAmount: gross, platformCut: cut, netAmount: gross - cut,
         });
         tryAutoPartnerPayout(earning);
+      }
+      // Admin + lab partner notifications fire after payment confirmed, not at request creation
+      if (diagReq) {
+        const tests = Array.isArray(diagReq.tests) ? diagReq.tests : [];
+        sendAdminAlertEmail({
+          subject: 'New lab test request paid',
+          headline: 'New Lab Test Request',
+          body: `${req.user.name || 'A patient'} paid for lab tests: ${tests.slice(0, 3).join(', ')}${tests.length > 3 ? ` +${tests.length - 3} more` : ''}.${diagReq.collectionType === 'home_visit' && diagReq.preferredDate ? ` Preferred visit: ${diagReq.preferredDate}${diagReq.preferredTime ? ' at ' + diagReq.preferredTime : ''}.` : ''}`,
+          ctaLabel: 'View Lab Portal',
+          ctaUrl: `${process.env.CLIENT_URL || 'https://ibamhealth.com'}/lab`,
+        }).catch(err => console.error('[Email] Admin lab test alert:', err.message));
+        notifyAdmins({
+          type: 'lab_request_placed',
+          title: 'New Lab Test Request',
+          message: `${req.user.name || 'A patient'} paid for: ${tests.slice(0, 2).join(', ')}${tests.length > 2 ? ` +${tests.length - 2} more` : ''}.`,
+          metadata: { requestId: payment.serviceRef, patientId: req.user._id },
+        }).catch(() => {});
+        // Notify all active lab partners that a paid request is now available to claim
+        const activeLabs = await LabPartner.find({ status: 'active' }, 'user').lean();
+        for (const lab of activeLabs) {
+          if (lab.user) {
+            createNotification({
+              userId: lab.user,
+              type: 'lab_request_placed',
+              title: 'New Lab Request Available',
+              message: `Paid ${diagReq.collectionType === 'home_visit' ? 'home visit' : 'walk-in'} request: ${tests.slice(0, 2).join(', ')}${tests.length > 2 ? ` +${tests.length - 2} more` : ''}.`,
+              metadata: { requestId: payment.serviceRef },
+            }).catch(() => {});
+          }
+        }
       }
     }
 

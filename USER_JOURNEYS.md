@@ -1,7 +1,7 @@
 # iBam Health — All User Journeys
 
 > Platform URL: **https://www.ibamhealth.com**  
-> API: **http://localhost:5000**  
+> API: **http://10.0.1.44:5000**  
 > Mobile APK: sideload or Play Store once published  
 > Six roles: **Patient · Doctor · Pharmacy Partner · Lab · Field Agent · Admin**
 > Lab

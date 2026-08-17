@@ -19,5 +19,6 @@ const doctorEarningSchema = new mongoose.Schema(
 );
 
 doctorEarningSchema.index({ doctor: 1, payoutStatus: 1 });
+doctorEarningSchema.index({ consultation: 1 }, { unique: true });
 
 module.exports = mongoose.model('DoctorEarning', doctorEarningSchema);
