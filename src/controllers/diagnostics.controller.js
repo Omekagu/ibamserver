@@ -2,12 +2,14 @@ const { randomUUID } = require('crypto')
 const DiagnosticsRequest = require('../models/DiagnosticsRequest')
 const LabPartner = require('../models/LabPartner')
 const LabResult = require('../models/LabResult')
+const LabTest = require('../models/LabTest')
 const Payment = require('../models/Payment')
 const FieldAgent = require('../models/FieldAgent')
 const HomeVisitSchedule = require('../models/HomeVisitSchedule')
 const User = require('../models/User')
 require('../models/WellnessPackage') // ensure model registered for populate
 const { uploadBuffer } = require('../services/cloudinary.service')
+const toPdf = require('../utils/toPdf')
 const {
   createNotification,
   notifyAdmins
@@ -16,6 +18,14 @@ const { sendAdminAlertEmail } = require('../services/email.service')
 const { sendSuccess } = require('../utils/response')
 const AppError = require('../utils/AppError')
 const asyncHandler = require('../utils/asyncHandler')
+
+exports.listLabTests = asyncHandler(async (req, res) => {
+  const tests = await LabTest.find({ isActive: true })
+    .select('name category')
+    .sort({ order: 1, name: 1 })
+    .lean()
+  sendSuccess(res, 200, 'Lab tests retrieved.', { tests })
+})
 
 exports.onboardLab = asyncHandler(async (req, res, next) => {
   const {
@@ -185,19 +195,19 @@ exports.requestTests = asyncHandler(async (req, res, next) => {
       : {})
   })
 
-  // Notify patient
-  createNotification({
-    userId: req.user._id,
-    type: 'lab_request_placed',
-    title: 'Lab Test Request Submitted',
-    message: `Your request for ${tests.slice(0, 2).join(', ')}${
-      tests.length > 2 ? ` +${tests.length - 2} more` : ''
-    } has been submitted. Our lab team will process it shortly.`,
-    metadata: { requestId: request._id },
-    emailData: { tests, collectionType }
-  }).catch(err =>
-    console.error('[Notification] Lab request placed:', err.message)
-  )
+  // Only notify patient immediately for free requests; paid requests are confirmed after payment verify
+  if (clientAmount === 0) {
+    createNotification({
+      userId: req.user._id,
+      type: 'lab_request_placed',
+      title: 'Lab Test Request Submitted',
+      message: `Your request for ${tests.slice(0, 2).join(', ')}${
+        tests.length > 2 ? ` +${tests.length - 2} more` : ''
+      } has been submitted. Our lab team will process it shortly.`,
+      metadata: { requestId: request._id },
+      emailData: { tests, collectionType }
+    }).catch(err => console.error('[Notification] Lab request placed:', err.message))
+  }
 
   // Lab partners are notified AFTER payment is confirmed (in payments.controller.js verify handler).
   sendSuccess(res, 201, 'Diagnostics request submitted.', { request })
@@ -231,6 +241,14 @@ exports.requestTestsForPatient = asyncHandler(async (req, res, next) => {
   }).catch(() => {})
 
   sendSuccess(res, 201, 'Lab tests ordered for patient.', { request })
+})
+
+exports.cancelMyRequest = asyncHandler(async (req, res, next) => {
+  const request = await DiagnosticsRequest.findOne({ _id: req.params.id, patient: req.user._id })
+  if (!request) return next(new AppError('Request not found.', 404))
+  if (request.paymentRef) return next(new AppError('Cannot cancel a paid request.', 400))
+  await request.deleteOne()
+  sendSuccess(res, 200, 'Request cancelled.', {})
 })
 
 exports.listLabs = asyncHandler(async (req, res) => {
@@ -312,10 +330,15 @@ exports.assignLab = asyncHandler(async (req, res, next) => {
 
 exports.uploadResult = asyncHandler(async (req, res, next) => {
   if (!req.file) return next(new AppError('No file uploaded.', 400))
+  const allowed = ['image/jpeg', 'image/png', 'application/pdf']
+  if (!allowed.includes(req.file.mimetype))
+    return next(new AppError('Only JPEG, PNG, or PDF files are accepted for results.', 400))
+
   const request = await DiagnosticsRequest.findById(req.params.id)
   if (!request) return next(new AppError('Request not found.', 404))
 
-  const result_file = await uploadBuffer(req.file.buffer, 'lab_results', 'auto')
+  const pdfBuffer = await toPdf(req.file.buffer, req.file.mimetype)
+  const result_file = await uploadBuffer(pdfBuffer, 'lab_results', 'raw', { format: 'pdf' })
   const result = await LabResult.create({
     request: req.params.id,
     fileUrl: result_file.secure_url,
@@ -368,7 +391,7 @@ exports.getMyResults = asyncHandler(async (req, res) => {
     return obj
   })
 
-  sendSuccess(res, 200, 'Results retrieved.', { requests: enriched })
+  sendSuccess(res, 200, 'Results retrieved.', { requests: enriched, results: labResults })
 })
 
 exports.scheduleHomeVisit = asyncHandler(async (req, res, next) => {
@@ -483,7 +506,7 @@ exports.updateLabRequestStatus = asyncHandler(async (req, res, next) => {
   }).populate('patient', 'name')
   if (!request) return next(new AppError('Request not found.', 404))
 
-  const allowed = ['assigned', 'collected', 'completed', 'no_show']
+  const allowed = ['assigned', 'sample_collected', 'processing', 'completed', 'no_show']
   if (!allowed.includes(status))
     return next(
       new AppError(`Status must be one of: ${allowed.join(', ')}.`, 400)
@@ -515,7 +538,7 @@ exports.updateLabRequestStatus = asyncHandler(async (req, res, next) => {
 
   // Record on-spot payment when home visit sample is collected
   if (
-    status === 'collected' &&
+    status === 'sample_collected' &&
     request.collectionType === 'home_visit' &&
     !request.paymentRef &&
     request.totalAmount > 0 &&

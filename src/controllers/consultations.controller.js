@@ -21,7 +21,14 @@ exports.startConsultation = asyncHandler(async (req, res, next) => {
     return next(new AppError('Only the assigned doctor can start this consultation.', 403));
   }
   if (appointment.status !== 'confirmed') {
-    return next(new AppError('This appointment is pending payment and cannot be started.', 400));
+    const msg = appointment.status === 'pending'
+      ? 'This appointment is awaiting payment and cannot be started yet.'
+      : appointment.status === 'cancelled'
+      ? 'This appointment has been cancelled.'
+      : appointment.status === 'completed'
+      ? 'This consultation has already been completed.'
+      : 'This appointment cannot be started.';
+    return next(new AppError(msg, 400));
   }
 
   const existing = await Consultation.findOne({ appointment: appointmentId });

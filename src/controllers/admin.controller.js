@@ -8,6 +8,7 @@ const Appointment = require('../models/Appointment')
 const Consultation = require('../models/Consultation')
 const Message = require('../models/Message')
 const DiagnosticsRequest = require('../models/DiagnosticsRequest')
+const LabResult = require('../models/LabResult')
 const PharmacyOrder = require('../models/PharmacyOrder')
 const Payment = require('../models/Payment')
 const Subscription = require('../models/Subscription')
@@ -763,12 +764,24 @@ exports.getDiagnosticsRequests = asyncHandler(async (req, res) => {
   const requests = await DiagnosticsRequest.find(filter)
     .populate('patient', 'name email phone')
     .populate('lab', 'name address phone')
-    .populate({ path: 'paymentRef', select: 'status amount reference' })
+    .populate({ path: 'paymentRef', select: 'status amount reference method transferReference' })
     .sort({ createdAt: -1 })
     .skip((page - 1) * limit)
     .limit(Number(limit))
   const total = await DiagnosticsRequest.countDocuments(filter)
-  sendSuccess(res, 200, 'Diagnostics requests retrieved.', { requests, total })
+
+  const requestIds = requests.map(r => r._id)
+  const labResults = await LabResult.find({ request: { $in: requestIds } }).lean()
+  const resultMap = {}
+  for (const lr of labResults) resultMap[lr.request.toString()] = lr
+  const enriched = requests.map(r => {
+    const obj = r.toObject()
+    const lr = resultMap[r._id.toString()]
+    if (lr) obj.result = { _id: lr._id, fileUrl: lr.fileUrl, notes: lr.notes, createdAt: lr.createdAt }
+    return obj
+  })
+
+  sendSuccess(res, 200, 'Diagnostics requests retrieved.', { requests: enriched, total })
 })
 
 exports.getSubscriptions = asyncHandler(async (req, res) => {

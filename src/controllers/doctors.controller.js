@@ -184,11 +184,33 @@ exports.getAvailableSlots = asyncHandler(async (req, res, next) => {
 })
 
 exports.getMyAvailability = asyncHandler(async (req, res) => {
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+
+  // Auto-delete past one-off dates that have no booked slots — they're stale
+  await Availability.deleteMany({
+    doctor: req.user._id,
+    type: 'one_off',
+    date: { $lt: today },
+    'slots.isBooked': { $ne: true }
+  })
+
   const availabilities = await Availability.find({
     doctor: req.user._id,
     isActive: true
   }).lean()
   sendSuccess(res, 200, 'Availability retrieved.', { availabilities })
+})
+
+exports.deleteAvailability = asyncHandler(async (req, res, next) => {
+  const availability = await Availability.findOne({ _id: req.params.id, doctor: req.user._id })
+  if (!availability) return next(new AppError('Availability not found.', 404))
+
+  const hasBooked = availability.slots.some(s => s.isBooked)
+  if (hasBooked) return next(new AppError('Cannot delete availability with active booked appointments.', 400))
+
+  await availability.deleteOne()
+  sendSuccess(res, 200, 'Availability deleted.', {})
 })
 
 exports.getDoctorAppointments = asyncHandler(async (req, res) => {

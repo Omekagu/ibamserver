@@ -1,9 +1,9 @@
 const cloudinary = require('../config/cloudinary');
 
-const uploadBuffer = async (buffer, folder, resourceType = 'auto') => {
+const uploadBuffer = async (buffer, folder, resourceType = 'auto', extra = {}) => {
   return new Promise((resolve, reject) => {
     const stream = cloudinary.uploader.upload_stream(
-      { folder: `ibamhealth/${folder}`, resource_type: resourceType },
+      { folder: `ibamhealth/${folder}`, resource_type: resourceType, ...extra },
       (error, result) => {
         if (error) return reject(error);
         resolve(result);

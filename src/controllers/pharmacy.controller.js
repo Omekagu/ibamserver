@@ -9,7 +9,7 @@ const {
   createNotification,
   notifyAdmins
 } = require('../services/notification.service')
-const { sendAdminAlertEmail } = require('../services/email.service')
+const { sendAdminAlertEmail, sendPharmacyOrderConfirmedEmail } = require('../services/email.service')
 const { sendSuccess } = require('../utils/response')
 const AppError = require('../utils/AppError')
 const asyncHandler = require('../utils/asyncHandler')
@@ -269,21 +269,24 @@ exports.placeOrder = asyncHandler(async (req, res, next) => {
     name: m.name || String(m)
   }))
 
-  // Pharmacy partner is notified AFTER payment is confirmed (in payments.controller.js verify handler).
-  createNotification({
-    userId: req.user._id,
-    type: 'pharmacy_order_placed',
-    title: 'Pharmacy Order Placed',
-    message:
-      'Your prescription order has been submitted and is awaiting processing.',
-    metadata: { orderId: order._id },
-    emailData: {
+  // Patient notified only for free orders here; paid orders get notified in payments verify handler
+  if (totalAmount === 0) {
+    createNotification({
+      userId: req.user._id,
+      type: 'pharmacy_order_placed',
+      title: 'Pharmacy Order Placed',
+      message: 'Your prescription order has been submitted and is awaiting processing.',
+      metadata: { orderId: order._id },
+      emailData: { pharmacyName: pharmacy.name, items: prescriptionItems }
+    }).catch(err => console.error('[Notification] Pharmacy order placed:', err.message))
+
+    sendPharmacyOrderConfirmedEmail({
+      email: req.user.email,
+      name: req.user.name,
       pharmacyName: pharmacy.name,
-      items: prescriptionItems
-    }
-  }).catch(err =>
-    console.error('[Notification] Pharmacy order placed:', err.message)
-  )
+      items: prescriptionItems,
+    }).catch(() => {})
+  }
 
   sendSuccess(res, 201, 'Order placed.', { order, totalAmount })
 })
@@ -422,18 +425,29 @@ exports.placeDirectOrder = asyncHandler(async (req, res, next) => {
     }).catch(() => {})
   }
 
-  createNotification({
-    userId: req.user._id,
-    type: 'pharmacy_order_placed',
-    title: 'Pharmacy Order Placed',
-    message: requiresApproval
-      ? 'Your order requires admin approval because it contains prescription drugs.'
-      : `Your order from ${pharmacy.name} has been placed successfully.`,
-    metadata: { orderId: order._id },
-    emailData: { pharmacyName: pharmacy.name, items: orderItems }
-  }).catch(err =>
-    console.error('[Notification] Direct order placed:', err.message)
-  )
+  // Only notify patient immediately for free orders or approval-needed orders;
+  // paid orders are notified after payment is confirmed in payments verify handler
+  if (totalAmount === 0 || requiresApproval) {
+    createNotification({
+      userId: req.user._id,
+      type: 'pharmacy_order_placed',
+      title: 'Pharmacy Order Placed',
+      message: requiresApproval
+        ? 'Your order requires admin approval because it contains prescription drugs.'
+        : `Your order from ${pharmacy.name} has been placed successfully.`,
+      metadata: { orderId: order._id },
+      emailData: { pharmacyName: pharmacy.name, items: orderItems }
+    }).catch(err => console.error('[Notification] Direct order placed:', err.message))
+
+    if (totalAmount === 0) {
+      sendPharmacyOrderConfirmedEmail({
+        email: req.user.email,
+        name: req.user.name,
+        pharmacyName: pharmacy.name,
+        items: orderItems,
+      }).catch(() => {})
+    }
+  }
 
   sendSuccess(res, 201, 'Order placed.', { order, requiresApproval })
 })
@@ -492,8 +506,25 @@ exports.updateOrderStatus = asyncHandler(async (req, res, next) => {
   sendSuccess(res, 200, 'Order status updated.', { order })
 })
 
+exports.cancelMyOrder = asyncHandler(async (req, res, next) => {
+  const order = await PharmacyOrder.findOne({ _id: req.params.id, patient: req.user._id })
+  if (!order) return next(new AppError('Order not found.', 404))
+  if (order.paymentRef) return next(new AppError('Cannot cancel a paid order.', 400))
+  if (order.status === 'cancelled') return sendSuccess(res, 200, 'Already cancelled.', {})
+  order.status = 'cancelled'
+  await order.save()
+  sendSuccess(res, 200, 'Order cancelled.', {})
+})
+
 exports.getMyOrders = asyncHandler(async (req, res) => {
-  const orders = await PharmacyOrder.find({ patient: req.user._id })
+  // Only show orders that are paid or free — abandoned pre-payment orders are excluded
+  const orders = await PharmacyOrder.find({
+    patient: req.user._id,
+    $or: [
+      { paymentRef: { $exists: true } },
+      { totalAmount: 0 },
+    ],
+  })
     .populate('pharmacy', 'name address phone')
     .populate('prescription', 'medications diagnosis')
     .sort({ createdAt: -1 })
@@ -557,20 +588,70 @@ exports.getPartnerOrders = asyncHandler(async (req, res) => {
 
 exports.getPharmacyEarnings = asyncHandler(async (req, res) => {
   const PartnerEarning = require('../models/PartnerEarning')
+  const PayoutRequest  = require('../models/PayoutRequest')
+
   const earnings = await PartnerEarning.find({
     partner: req.user._id,
     partnerType: 'pharmacy'
   }).sort({ createdAt: -1 })
+
+  const now = new Date()
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
+  const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+  const endOfLastMonth   = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999)
+
+  // Last 6 months breakdown for mini chart
+  const monthly = []
+  for (let i = 5; i >= 0; i--) {
+    const start = new Date(now.getFullYear(), now.getMonth() - i, 1)
+    const end   = new Date(now.getFullYear(), now.getMonth() - i + 1, 0, 23, 59, 59, 999)
+    const label = start.toLocaleDateString('en-NG', { month: 'short', year: '2-digit' })
+    const bucket = earnings.filter(e => {
+      const t = new Date(e.createdAt)
+      return t >= start && t <= end
+    })
+    monthly.push({
+      label,
+      net: Math.round(bucket.reduce((a, e) => a + e.netAmount, 0) * 100) / 100,
+      gross: Math.round(bucket.reduce((a, e) => a + e.grossAmount, 0) * 100) / 100,
+      count: bucket.length,
+    })
+  }
+
   const totals = earnings.reduce(
     (acc, e) => {
       acc.gross += e.grossAmount
-      acc.net += e.netAmount
-      acc.pending += e.payoutStatus === 'pending' ? e.netAmount : 0
+      acc.net   += e.netAmount
+      if (e.payoutStatus === 'pending')   acc.pending   += e.netAmount
+      if (e.payoutStatus === 'requested') acc.requested += e.netAmount
+      if (e.payoutStatus === 'paid')      acc.paid      += e.netAmount
       return acc
     },
-    { gross: 0, net: 0, pending: 0 }
+    { gross: 0, net: 0, pending: 0, requested: 0, paid: 0 }
   )
-  sendSuccess(res, 200, 'Earnings retrieved.', { earnings, totals })
+
+  const thisMonth = earnings
+    .filter(e => new Date(e.createdAt) >= startOfMonth)
+    .reduce((a, e) => a + e.netAmount, 0)
+
+  const lastMonth = earnings
+    .filter(e => { const t = new Date(e.createdAt); return t >= startOfLastMonth && t <= endOfLastMonth })
+    .reduce((a, e) => a + e.netAmount, 0)
+
+  // Payout request history for this partner
+  const payoutHistory = await PayoutRequest.find({ partner: req.user._id, partnerType: 'pharmacy' })
+    .sort({ requestedAt: -1 })
+    .limit(10)
+    .lean()
+
+  sendSuccess(res, 200, 'Earnings retrieved.', {
+    earnings,
+    totals,
+    monthly,
+    thisMonth: Math.round(thisMonth * 100) / 100,
+    lastMonth: Math.round(lastMonth * 100) / 100,
+    payoutHistory,
+  })
 })
 
 exports.requestPharmacyPayout = asyncHandler(async (req, res, next) => {

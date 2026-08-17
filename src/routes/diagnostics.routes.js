@@ -5,6 +5,7 @@ const { restrictTo } = require('../middleware/role');
 const upload = require('../middleware/upload');
 
 router.post('/labs/onboard', ctrl.onboardLab);
+router.get('/lab-tests', ctrl.listLabTests);
 
 router.use(protect);
 
@@ -20,6 +21,7 @@ router.put('/labs/requests/:id/status', restrictTo('lab_partner'), ctrl.updateLa
 
 router.post('/doctor-order', restrictTo('doctor'), ctrl.requestTestsForPatient)
 router.post('/request', upload.single('referral'), ctrl.requestTests);
+router.delete('/request/:id', ctrl.cancelMyRequest);
 router.get('/results/mine', ctrl.getMyResults);
 router.get('/field-agent/schedule', restrictTo('field_agent'), ctrl.getAgentSchedule);
 router.put('/:id/assign-lab', restrictTo('admin', 'lab_partner'), ctrl.assignLab);

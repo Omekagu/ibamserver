@@ -3,6 +3,7 @@ const Payment = require('../models/Payment');
 const Appointment = require('../models/Appointment');
 const Availability = require('../models/Availability');
 const PharmacyOrder = require('../models/PharmacyOrder');
+const Prescription = require('../models/Prescription');
 const DiagnosticsRequest = require('../models/DiagnosticsRequest');
 const PartnerEarning = require('../models/PartnerEarning');
 const { initializeTransaction, verifyTransaction, createTransferRecipient, initiateTransfer } = require('../services/paystack.service');
@@ -10,7 +11,7 @@ const PlatformSettings = require('../models/PlatformSettings');
 const PharmacyPartner = require('../models/PharmacyPartner');
 const LabPartner = require('../models/LabPartner');
 const { createNotification, notifyAdmins } = require('../services/notification.service');
-const { sendAdminAlertEmail, sendAppointmentBookedPatientEmail } = require('../services/email.service');
+const { sendAdminAlertEmail, sendAppointmentBookedPatientEmail, sendPharmacyOrderConfirmedEmail } = require('../services/email.service');
 const { sendSuccess } = require('../utils/response');
 const AppError = require('../utils/AppError');
 const asyncHandler = require('../utils/asyncHandler');
@@ -135,20 +136,38 @@ exports.verify = asyncHandler(async (req, res, next) => {
         { paymentRef: payment._id, status: 'processing' },
         { new: true }
       ).populate('pharmacy', 'user name');
+      // Mark the linked prescription as forwarded now that payment is confirmed
+      if (order?.prescription) {
+        Prescription.findByIdAndUpdate(order.prescription, { forwardedToPharmacy: true }).catch(() => {});
+      }
       if (order?.pharmacy?.user) {
         const gross = payment.amount / 100;
         const cut   = Math.round(gross * 0.1 * 100) / 100;
-        const earning = await PartnerEarning.create({
+        await PartnerEarning.create({
           partner: order.pharmacy.user, partnerType: 'pharmacy', partnerName: order.pharmacy.name,
           serviceRef: payment.serviceRef, grossAmount: gross, platformCut: cut, netAmount: gross - cut,
         });
-        tryAutoPartnerPayout(earning);
         createNotification({
           userId: order.pharmacy.user,
           type: 'pharmacy_order_placed',
           title: 'New Order Received',
           message: `A patient has paid ₦${gross.toLocaleString('en-NG')} for an order. Please process it.`,
           metadata: { orderId: payment.serviceRef },
+        }).catch(() => {});
+        // Patient confirmation — deferred here so it only fires after payment
+        createNotification({
+          userId: req.user._id,
+          type: 'pharmacy_order_placed',
+          title: 'Order Confirmed!',
+          message: `Your order from ${order.pharmacy.name} is confirmed and being processed.`,
+          metadata: { orderId: payment.serviceRef },
+        }).catch(() => {});
+        // Patient confirmation email
+        sendPharmacyOrderConfirmedEmail({
+          email: req.user.email,
+          name: req.user.name,
+          pharmacyName: order.pharmacy.name,
+          items: order.items ?? [],
         }).catch(() => {});
       }
       // Admin notification (fires after payment confirmed, not at order creation)
@@ -178,11 +197,21 @@ exports.verify = asyncHandler(async (req, res, next) => {
       if (diagReq?.lab?.user) {
         const gross = payment.amount / 100;
         const cut   = Math.round(gross * 0.1 * 100) / 100;
-        const earning = await PartnerEarning.create({
+        await PartnerEarning.create({
           partner: diagReq.lab.user, partnerType: 'lab', partnerName: diagReq.lab.name,
           serviceRef: payment.serviceRef, grossAmount: gross, platformCut: cut, netAmount: gross - cut,
         });
-        tryAutoPartnerPayout(earning);
+      }
+      // Patient confirmation — fires here so it only triggers after payment, not at request creation
+      if (diagReq) {
+        const tests = Array.isArray(diagReq.tests) ? diagReq.tests : [];
+        createNotification({
+          userId: req.user._id,
+          type: 'lab_request_placed',
+          title: 'Lab Booking Confirmed!',
+          message: `Your booking for ${tests.slice(0, 2).join(', ')}${tests.length > 2 ? ` +${tests.length - 2} more` : ''} is confirmed. Our team will be in touch with next steps.`,
+          metadata: { requestId: payment.serviceRef },
+        }).catch(() => {});
       }
       // Admin + lab partner notifications fire after payment confirmed, not at request creation
       if (diagReq) {

@@ -35,11 +35,19 @@ exports.book = asyncHandler(async (req, res, next) => {
       { $set: { 'slots.$.isBooked': true } }
     );
   } else {
-    // Fall back to time-based lookup when client doesn't send explicit IDs
-    await Availability.findOneAndUpdate(
-      { doctor: doctor._id, isActive: true, 'slots.startTime': slotTime, 'slots.isBooked': false },
+    // Fall back: mirror getAvailableSlots precedence — one-off first, then recurring
+    const dateOnly = new Date(scheduledDate.toISOString().split('T')[0]);
+    const dayOfWeek = scheduledDate.getDay();
+    const bookedOneOff = await Availability.findOneAndUpdate(
+      { doctor: doctorId, type: 'one_off', date: dateOnly, isActive: true, 'slots.startTime': slotTime, 'slots.isBooked': false },
       { $set: { 'slots.$.isBooked': true } }
     );
+    if (!bookedOneOff) {
+      await Availability.findOneAndUpdate(
+        { doctor: doctorId, type: 'recurring', dayOfWeek, isActive: true, 'slots.startTime': slotTime, 'slots.isBooked': false },
+        { $set: { 'slots.$.isBooked': true } }
+      );
+    }
   }
 
   // Compute fee: type-specific rate → billing model → urgency surcharge
@@ -65,18 +73,16 @@ exports.book = asyncHandler(async (req, res, next) => {
 
   const doctorUser = await User.findById(doctorId).select('name').lean();
 
-  // Notify patient (in-app)
-  createNotification({
-    userId: req.user._id,
-    type: 'appointment_booked',
-    title: 'Appointment Booked',
-    message: `Your ${type} appointment with Dr. ${doctorUser?.name || 'your doctor'} has been booked. Awaiting payment confirmation.`,
-    metadata: { appointmentId: appointment._id },
-  }).catch(() => {});
-
-  // Only notify doctor immediately for free appointments (auto-confirmed).
-  // Paid appointments: doctor notification fires in payments.controller.js after payment succeeds.
+  // For free appointments: notify both patient and doctor immediately.
+  // For paid appointments: notifications fire in payments.controller.js after payment is verified.
   if (consultationFee === 0) {
+    createNotification({
+      userId: req.user._id,
+      type: 'appointment_booked',
+      title: 'Appointment Booked',
+      message: `Your ${type} appointment with Dr. ${doctorUser?.name || 'your doctor'} is confirmed.`,
+      metadata: { appointmentId: appointment._id },
+    }).catch(() => {});
     createNotification({
       userId: doctorId,
       type: 'appointment_confirmed',
@@ -119,30 +125,56 @@ exports.cancel = asyncHandler(async (req, res, next) => {
     return next(new AppError(`Cannot cancel a ${appointment.status} appointment.`, 400));
   }
 
+  const wasConfirmed = appointment.status === 'confirmed';
+
   appointment.status = 'cancelled';
   appointment.cancellationReason = reason;
   appointment.cancelledBy = req.user._id;
   await appointment.save();
 
-  const notifyId = req.user._id.toString() === appointment.patient.toString()
-    ? appointment.doctor
-    : appointment.patient;
+  // Free the availability slot so other patients can book it.
+  // Mirror getAvailableSlots precedence: one-off for the exact date first, then recurring by day-of-week.
+  const scheduledDate = new Date(appointment.scheduledAt);
+  const slotTime = `${String(scheduledDate.getHours()).padStart(2, '0')}:${String(scheduledDate.getMinutes()).padStart(2, '0')}`;
+  const dateOnly = new Date(scheduledDate.toISOString().split('T')[0]);
+  const dayOfWeek = scheduledDate.getDay();
+  const slotFreeQuery = { $set: { 'slots.$.isBooked': false } };
 
-  const isNotifyingPatient = notifyId.toString() === appointment.patient.toString();
-  let cancelEmailData;
-  if (isNotifyingPatient) {
-    const doctorUser = await User.findById(appointment.doctor).select('name').lean();
-    cancelEmailData = { doctorName: doctorUser?.name || 'Doctor', scheduledAt: appointment.scheduledAt, reason };
+  const freedOneOff = await Availability.findOneAndUpdate(
+    { doctor: appointment.doctor, type: 'one_off', date: dateOnly, isActive: true, 'slots.startTime': slotTime },
+    slotFreeQuery
+  ).catch(() => null);
+
+  if (!freedOneOff) {
+    Availability.findOneAndUpdate(
+      { doctor: appointment.doctor, type: 'recurring', dayOfWeek, isActive: true, 'slots.startTime': slotTime },
+      slotFreeQuery
+    ).catch(() => {});
   }
 
-  await createNotification({
-    userId: notifyId,
-    type: 'appointment_cancelled',
-    title: 'Appointment Cancelled',
-    message: `An appointment on ${appointment.scheduledAt.toDateString()} has been cancelled.`,
-    metadata: { appointmentId: appointment._id, reason },
-    emailData: cancelEmailData,
-  });
+  // Only notify the other party if the appointment was confirmed (paid).
+  // Pending (unpaid) appointments: the other party never knew about it, so no need to notify.
+  if (wasConfirmed) {
+    const notifyId = req.user._id.toString() === appointment.patient.toString()
+      ? appointment.doctor
+      : appointment.patient;
+
+    const isNotifyingPatient = notifyId.toString() === appointment.patient.toString();
+    let cancelEmailData;
+    if (isNotifyingPatient) {
+      const doctorUser = await User.findById(appointment.doctor).select('name').lean();
+      cancelEmailData = { doctorName: doctorUser?.name || 'Doctor', scheduledAt: appointment.scheduledAt, reason };
+    }
+
+    createNotification({
+      userId: notifyId,
+      type: 'appointment_cancelled',
+      title: 'Appointment Cancelled',
+      message: `An appointment on ${appointment.scheduledAt.toDateString()} has been cancelled.`,
+      metadata: { appointmentId: appointment._id, reason },
+      emailData: cancelEmailData,
+    }).catch(() => {});
+  }
 
   sendSuccess(res, 200, 'Appointment cancelled.', { appointment });
 });

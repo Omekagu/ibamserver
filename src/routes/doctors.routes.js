@@ -14,9 +14,10 @@ router.get('/my/profile',        protect, restrictTo('doctor'), ctrl.getMyProfil
 router.put('/my/profile',        protect, restrictTo('doctor'), ctrl.updateMyProfile);
 router.post('/my/avatar',        protect, restrictTo('doctor'), upload.single('avatar'),  ctrl.uploadAvatar);
 router.post('/license',          protect, restrictTo('doctor'), upload.single('license'), ctrl.uploadLicense);
-router.post('/availability',     protect, restrictTo('doctor'), ctrl.setAvailability);
-router.get('/my/appointments',   protect, restrictTo('doctor'), ctrl.getDoctorAppointments);
-router.get('/my/availability',   protect, restrictTo('doctor'), ctrl.getMyAvailability);
+router.post('/availability',          protect, restrictTo('doctor'), ctrl.setAvailability);
+router.delete('/availability/:id',    protect, restrictTo('doctor'), ctrl.deleteAvailability);
+router.get('/my/appointments',        protect, restrictTo('doctor'), ctrl.getDoctorAppointments);
+router.get('/my/availability',        protect, restrictTo('doctor'), ctrl.getMyAvailability);
 router.get('/my/earnings',       protect, restrictTo('doctor'), earningsCtrl.getEarnings);
 router.post('/my/payouts/request', protect, restrictTo('doctor'), earningsCtrl.requestPayout);
 
