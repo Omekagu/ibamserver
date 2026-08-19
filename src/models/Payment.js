@@ -8,7 +8,7 @@ const paymentSchema = new mongoose.Schema(
     paystackRef: { type: String },
     type: {
       type: String,
-      enum: ['consultation', 'pharmacy', 'lab_test', 'subscription', 'wellness_package'],
+      enum: ['consultation', 'pharmacy', 'pharmacy_batch', 'lab_test', 'subscription', 'wellness_package'],
       required: true,
     },
     method: {
@@ -16,7 +16,8 @@ const paymentSchema = new mongoose.Schema(
       enum: ['paystack', 'direct_transfer', 'walk_in_cash', 'pos'],
       default: 'paystack',
     },
-    serviceRef: { type: mongoose.Schema.Types.ObjectId },
+    serviceRef:  { type: mongoose.Schema.Types.ObjectId },
+    batchRefs:   [{ type: mongoose.Schema.Types.ObjectId }],
     serviceModel: { type: String },
     status: {
       type: String,

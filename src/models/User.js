@@ -29,6 +29,7 @@ const userSchema = new mongoose.Schema(
     expoPushToken: { type: String, default: null },
     loginAttemptCount: { type: Number, default: 0, select: false },
     loginLockedUntil:  { type: Date,   default: null, select: false },
+    pendingBankAccount: { type: mongoose.Schema.Types.Mixed, select: false },
   },
   { timestamps: true }
 );

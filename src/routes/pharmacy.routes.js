@@ -19,6 +19,7 @@ router.put('/catalog', restrictTo('pharmacy_partner'), ctrl.updateCatalog);
 
 router.post('/order', restrictTo('patient'), ctrl.placeOrder);
 router.post('/order/direct', restrictTo('patient'), upload.single('prescription'), ctrl.placeDirectOrder);
+router.post('/order/batch', restrictTo('patient'), ctrl.placeBatchOrders);
 router.patch('/orders/:id/cancel', restrictTo('patient'), ctrl.cancelMyOrder);
 router.get('/orders/mine', restrictTo('patient'), ctrl.getMyOrders);
 router.get('/orders/partner', restrictTo('pharmacy_partner'), ctrl.getPartnerOrders);

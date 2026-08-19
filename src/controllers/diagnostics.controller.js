@@ -1,4 +1,4 @@
-const { randomUUID } = require('crypto')
+﻿const { randomUUID } = require('crypto')
 const DiagnosticsRequest = require('../models/DiagnosticsRequest')
 const LabPartner = require('../models/LabPartner')
 const LabResult = require('../models/LabResult')
@@ -103,18 +103,17 @@ exports.getLabProfile = asyncHandler(async (req, res, next) => {
 })
 
 exports.updateLabProfile = asyncHandler(async (req, res, next) => {
-  const { name, address, phone, bankAccount } = req.body
+  const { name, address, phone } = req.body
+  // bankAccount is intentionally excluded  use POST /api/kyc/verify-bank instead
   const update = {}
   if (name) update.name = name
   if (address) update.address = address
   if (phone) update.phone = phone
-  if (bankAccount && typeof bankAccount === 'object')
-    update.bankAccount = bankAccount
 
   const lab = await LabPartner.findOneAndUpdate(
     { user: req.user._id },
     update,
-    { new: true, runValidators: true }
+    { returnDocument: 'after', runValidators: true }
   )
   if (!lab) return next(new AppError('Lab partner record not found.', 404))
   sendSuccess(res, 200, 'Lab profile updated.', { lab })
@@ -128,7 +127,7 @@ exports.updateLabTests = asyncHandler(async (req, res, next) => {
   const lab = await LabPartner.findOneAndUpdate(
     { user: req.user._id },
     { testsOffered },
-    { new: true, runValidators: true }
+    { returnDocument: 'after', runValidators: true }
   )
   if (!lab) return next(new AppError('Lab partner record not found.', 404))
   sendSuccess(res, 200, 'Tests updated.', { lab })
@@ -206,7 +205,9 @@ exports.requestTests = asyncHandler(async (req, res, next) => {
       } has been submitted. Our lab team will process it shortly.`,
       metadata: { requestId: request._id },
       emailData: { tests, collectionType }
-    }).catch(err => console.error('[Notification] Lab request placed:', err.message))
+    }).catch(err =>
+      console.error('[Notification] Lab request placed:', err.message)
+    )
   }
 
   // Lab partners are notified AFTER payment is confirmed (in payments.controller.js verify handler).
@@ -215,10 +216,14 @@ exports.requestTests = asyncHandler(async (req, res, next) => {
 
 // Doctor orders lab tests for a patient during/after a consultation
 exports.requestTestsForPatient = asyncHandler(async (req, res, next) => {
-  if (req.user.role !== 'doctor') return next(new AppError('Only doctors can order lab tests for patients.', 403))
+  if (req.user.role !== 'doctor')
+    return next(
+      new AppError('Only doctors can order lab tests for patients.', 403)
+    )
   const { patientId, tests, notes, consultationId } = req.body
   if (!patientId) return next(new AppError('patientId is required.', 400))
-  if (!Array.isArray(tests) || !tests.length) return next(new AppError('tests array is required.', 400))
+  if (!Array.isArray(tests) || !tests.length)
+    return next(new AppError('tests array is required.', 400))
 
   const request = await DiagnosticsRequest.create({
     patient: patientId,
@@ -236,7 +241,9 @@ exports.requestTestsForPatient = asyncHandler(async (req, res, next) => {
     userId: patientId,
     type: 'lab_request_placed',
     title: 'Lab Tests Ordered',
-    message: `Your doctor has ordered ${tests.slice(0, 2).join(', ')}${tests.length > 2 ? ` +${tests.length - 2} more` : ''}. Check your Lab section to pay and proceed.`,
+    message: `Your doctor has ordered ${tests.slice(0, 2).join(', ')}${
+      tests.length > 2 ? ` +${tests.length - 2} more` : ''
+    }. Check your Lab section to pay and proceed.`,
     metadata: { requestId: request._id }
   }).catch(() => {})
 
@@ -244,9 +251,13 @@ exports.requestTestsForPatient = asyncHandler(async (req, res, next) => {
 })
 
 exports.cancelMyRequest = asyncHandler(async (req, res, next) => {
-  const request = await DiagnosticsRequest.findOne({ _id: req.params.id, patient: req.user._id })
+  const request = await DiagnosticsRequest.findOne({
+    _id: req.params.id,
+    patient: req.user._id
+  })
   if (!request) return next(new AppError('Request not found.', 404))
-  if (request.paymentRef) return next(new AppError('Cannot cancel a paid request.', 400))
+  if (request.paymentRef)
+    return next(new AppError('Cannot cancel a paid request.', 400))
   await request.deleteOne()
   sendSuccess(res, 200, 'Request cancelled.', {})
 })
@@ -294,7 +305,9 @@ exports.claimRequest = asyncHandler(async (req, res, next) => {
     paymentRef: { $exists: true }
   })
   if (!request)
-    return next(new AppError('Request not found, unpaid, or already claimed.', 404))
+    return next(
+      new AppError('Request not found, unpaid, or already claimed.', 404)
+    )
 
   request.lab = lab._id
   request.status = 'assigned'
@@ -332,13 +345,20 @@ exports.uploadResult = asyncHandler(async (req, res, next) => {
   if (!req.file) return next(new AppError('No file uploaded.', 400))
   const allowed = ['image/jpeg', 'image/png', 'application/pdf']
   if (!allowed.includes(req.file.mimetype))
-    return next(new AppError('Only JPEG, PNG, or PDF files are accepted for results.', 400))
+    return next(
+      new AppError(
+        'Only JPEG, PNG, or PDF files are accepted for results.',
+        400
+      )
+    )
 
   const request = await DiagnosticsRequest.findById(req.params.id)
   if (!request) return next(new AppError('Request not found.', 404))
 
   const pdfBuffer = await toPdf(req.file.buffer, req.file.mimetype)
-  const result_file = await uploadBuffer(pdfBuffer, 'lab_results', 'raw', { format: 'pdf' })
+  const result_file = await uploadBuffer(pdfBuffer, 'lab_results', 'raw', {
+    format: 'pdf'
+  })
   const result = await LabResult.create({
     request: req.params.id,
     fileUrl: result_file.secure_url,
@@ -391,7 +411,10 @@ exports.getMyResults = asyncHandler(async (req, res) => {
     return obj
   })
 
-  sendSuccess(res, 200, 'Results retrieved.', { requests: enriched, results: labResults })
+  sendSuccess(res, 200, 'Results retrieved.', {
+    requests: enriched,
+    results: labResults
+  })
 })
 
 exports.scheduleHomeVisit = asyncHandler(async (req, res, next) => {
@@ -506,7 +529,13 @@ exports.updateLabRequestStatus = asyncHandler(async (req, res, next) => {
   }).populate('patient', 'name')
   if (!request) return next(new AppError('Request not found.', 404))
 
-  const allowed = ['assigned', 'sample_collected', 'processing', 'completed', 'no_show']
+  const allowed = [
+    'assigned',
+    'sample_collected',
+    'processing',
+    'completed',
+    'no_show'
+  ]
   if (!allowed.includes(status))
     return next(
       new AppError(`Status must be one of: ${allowed.join(', ')}.`, 400)

@@ -1,4 +1,4 @@
-const User = require('../models/User')
+﻿const User = require('../models/User')
 const Doctor = require('../models/Doctor')
 const Specialization = require('../models/Specialization')
 const PlatformService = require('../models/PlatformService')
@@ -20,7 +20,10 @@ const AuditLog = require('../models/AuditLog')
 const Triage = require('../models/Triage')
 const PlatformSettings = require('../models/PlatformSettings')
 const SubscriptionPlan = require('../models/SubscriptionPlan')
-const { createNotification, notifyAdmins } = require('../services/notification.service')
+const {
+  createNotification,
+  notifyAdmins
+} = require('../services/notification.service')
 const { sendPushNotifications } = require('../services/push.service')
 const {
   sendBroadcastEmail,
@@ -53,7 +56,7 @@ async function tryAutoPartnerPayout (earning, partnerType) {
     await initiateTransfer({
       amount: earning.netAmount,
       recipient: recipient.recipient_code,
-      reason: `iBam Health payout – ${earning.partnerName || partnerType}`
+      reason: `iBam Health payout â€“ ${earning.partnerName || partnerType}`
     })
     await PartnerEarning.findByIdAndUpdate(earning._id, {
       payoutStatus: 'paid',
@@ -158,20 +161,43 @@ exports.approveDoctor = asyncHandler(async (req, res, next) => {
       payoutStatus: { $in: ['pending', 'requested'] }
     }).lean()
     if (unresolvedEarnings.length) {
-      const totalGross = unresolvedEarnings.reduce((s, e) => s + e.grossAmount, 0)
-      const doctorUser = await User.findById(doctor.user).select('name email').lean()
+      const totalGross = unresolvedEarnings.reduce(
+        (s, e) => s + e.grossAmount,
+        0
+      )
+      const doctorUser = await User.findById(doctor.user)
+        .select('name email')
+        .lean()
       notifyAdmins({
         type: 'refund_alert',
-        title: 'Rejected Doctor — Refund Review Required',
-        message: `Dr. ${doctorUser?.name ?? 'Unknown'} (${doctorUser?.email ?? ''}) was rejected but has ${unresolvedEarnings.length} unresolved earning(s) totalling ₦${totalGross.toLocaleString('en-NG')}. Review consultations and process patient refunds if applicable.`,
-        metadata: { doctorUserId: doctor.user, earningCount: unresolvedEarnings.length, totalGross }
+        title: 'Rejected Doctor  Refund Review Required',
+        message: `Dr. ${doctorUser?.name ?? 'Unknown'} (${
+          doctorUser?.email ?? ''
+        }) was rejected but has ${
+          unresolvedEarnings.length
+        } unresolved earning(s) totalling ₦${totalGross.toLocaleString(
+          'en-NG'
+        )}. Review consultations and process patient refunds if applicable.`,
+        metadata: {
+          doctorUserId: doctor.user,
+          earningCount: unresolvedEarnings.length,
+          totalGross
+        }
       }).catch(() => {})
       sendAdminAlertEmail({
-        subject: `Refund Review — Rejected Dr. ${doctorUser?.name ?? ''}`,
+        subject: `Refund Review  Rejected Dr. ${doctorUser?.name ?? ''}`,
         headline: 'Rejected Doctor Has Unresolved Earnings',
-        body: `Dr. ${doctorUser?.name ?? 'Unknown'} (${doctorUser?.email ?? ''}) has been rejected but has ${unresolvedEarnings.length} consultation earning(s) totalling ₦${totalGross.toLocaleString('en-NG')} in a pending/requested state.\n\nPlease review the associated consultations and determine whether patient refunds are required.`,
+        body: `Dr. ${doctorUser?.name ?? 'Unknown'} (${
+          doctorUser?.email ?? ''
+        }) has been rejected but has ${
+          unresolvedEarnings.length
+        } consultation earning(s) totalling ₦${totalGross.toLocaleString(
+          'en-NG'
+        )} in a pending/requested state.\n\nPlease review the associated consultations and determine whether patient refunds are required.`,
         ctaLabel: 'Review Payouts',
-        ctaUrl: `${process.env.CLIENT_URL || 'https://ibamhealth.com'}/admin/payouts`
+        ctaUrl: `${
+          process.env.CLIENT_URL || 'https://ibamhealth.com'
+        }/admin/payouts`
       }).catch(() => {})
     }
   }
@@ -223,7 +249,7 @@ exports.suspendUser = asyncHandler(async (req, res, next) => {
   const user = await User.findByIdAndUpdate(
     req.params.id,
     { isActive: isActive ?? false },
-    { new: true }
+    { returnDocument: 'after' }
   )
   if (!user) return next(new AppError('User not found.', 404))
   sendSuccess(res, 200, 'User updated.', { user })
@@ -278,7 +304,7 @@ exports.confirmPayment = asyncHandler(async (req, res, next) => {
     const appt = await Appointment.findByIdAndUpdate(
       payment.serviceRef,
       { paymentRef: payment._id, status: 'confirmed' },
-      { new: true }
+      { returnDocument: 'after' }
     )
     if (appt) {
       const Availability = require('../models/Availability')
@@ -297,7 +323,7 @@ exports.confirmPayment = asyncHandler(async (req, res, next) => {
     const order = await PharmacyOrder.findByIdAndUpdate(
       payment.serviceRef,
       { paymentRef: payment._id, status: 'processing' },
-      { new: true }
+      { returnDocument: 'after' }
     ).populate('pharmacy', 'user name')
     if (order?.pharmacy?.user) {
       const gross = payment.amount / 100
@@ -318,7 +344,7 @@ exports.confirmPayment = asyncHandler(async (req, res, next) => {
     const diagReq = await DiagnosticsRequest.findByIdAndUpdate(
       payment.serviceRef,
       { paymentRef: payment._id, status: 'assigned' },
-      { new: true }
+      { returnDocument: 'after' }
     ).populate('lab', 'user name')
     if (diagReq?.lab?.user) {
       const gross = payment.amount / 100
@@ -402,7 +428,7 @@ exports.getPayouts = asyncHandler(async (req, res) => {
     })
   }
 
-  // Pharmacy & lab — use consolidated PayoutRequests
+  // Pharmacy & lab  use consolidated PayoutRequests
   if (!type || type === 'pharmacy' || type === 'lab') {
     const filter = {}
     if (status) filter.status = status
@@ -435,6 +461,112 @@ exports.getPayouts = asyncHandler(async (req, res) => {
   sendSuccess(res, 200, 'Payouts retrieved.', { earnings: results })
 })
 
+// GET /admin/earnings — per-transaction earning history across all partner types
+exports.getEarningHistory = asyncHandler(async (req, res) => {
+  const { type, status, from, to, page = 1, limit = 50 } = req.query
+
+  const dateFilter = {}
+  if (from) dateFilter.$gte = new Date(from)
+  if (to) dateFilter.$lte = new Date(to)
+
+  const rows = []
+
+  // ── Doctor earnings (per consultation) ──────────────────────────────────
+  if (!type || type === 'doctor') {
+    const filter = {}
+    if (status) filter.payoutStatus = status
+    if (from || to) filter.createdAt = dateFilter
+    const docs = await DoctorEarning.find(filter)
+      .populate('doctor', 'name email')
+      .sort({ createdAt: -1 })
+      .lean()
+    for (const e of docs) {
+      rows.push({
+        _id: String(e._id),
+        serviceType: 'consultation',
+        partnerType: 'doctor',
+        partnerName: e.doctor?.name ?? '—',
+        partnerEmail: e.doctor?.email ?? '',
+        grossAmount: e.grossAmount,
+        platformCut: e.platformCut,
+        platformPct: e.grossAmount
+          ? Math.round((e.platformCut / e.grossAmount) * 100)
+          : 0,
+        netAmount: e.netAmount,
+        payoutStatus: e.payoutStatus,
+        createdAt: e.createdAt,
+        requestedAt: e.payoutRequestedAt ?? null,
+        paidAt: e.paidAt ?? null
+      })
+    }
+  }
+
+  // ── Pharmacy & lab earnings (per order/request) ──────────────────────────
+  if (!type || type === 'pharmacy' || type === 'lab') {
+    const filter = {}
+    if (status) filter.payoutStatus = status
+    if (type === 'pharmacy') filter.partnerType = 'pharmacy'
+    if (type === 'lab') filter.partnerType = 'lab'
+    if (from || to) filter.createdAt = dateFilter
+    const docs = await PartnerEarning.find(filter)
+      .populate('partner', 'name email')
+      .sort({ createdAt: -1 })
+      .lean()
+    for (const e of docs) {
+      rows.push({
+        _id: String(e._id),
+        serviceType:
+          e.partnerType === 'pharmacy' ? 'pharmacy_order' : 'lab_test',
+        partnerType: e.partnerType,
+        partnerName: e.partnerName ?? e.partner?.name ?? '—',
+        partnerEmail: e.partner?.email ?? '',
+        grossAmount: e.grossAmount,
+        platformCut: e.platformCut,
+        platformPct: e.grossAmount
+          ? Math.round((e.platformCut / e.grossAmount) * 100)
+          : 0,
+        netAmount: e.netAmount,
+        payoutStatus: e.payoutStatus,
+        createdAt: e.createdAt,
+        requestedAt: e.payoutRequestedAt ?? null,
+        paidAt: e.paidAt ?? null
+      })
+    }
+  }
+
+  // Sort all rows newest-first
+  rows.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+
+  // Summary totals (across ALL rows, ignoring pagination)
+  const summary = {
+    platformRevenue: 0,
+    pendingNet: 0,
+    requestedNet: 0,
+    paidNet: 0,
+    totalTransactions: rows.length
+  }
+  for (const r of rows) {
+    summary.platformRevenue += r.platformCut
+    if (r.payoutStatus === 'pending') summary.pendingNet += r.netAmount
+    if (r.payoutStatus === 'requested') summary.requestedNet += r.netAmount
+    if (r.payoutStatus === 'paid') summary.paidNet += r.netAmount
+  }
+
+  // Paginate
+  const total = rows.length
+  const pageNum = Math.max(1, Number(page))
+  const pageSize = Math.min(200, Math.max(1, Number(limit)))
+  const paged = rows.slice((pageNum - 1) * pageSize, pageNum * pageSize)
+
+  sendSuccess(res, 200, 'Earning history retrieved.', {
+    earnings: paged,
+    total,
+    page: pageNum,
+    pages: Math.ceil(total / pageSize),
+    summary
+  })
+})
+
 exports.approvePayout = asyncHandler(async (req, res, next) => {
   const PayoutRequest = require('../models/PayoutRequest')
 
@@ -453,18 +585,25 @@ exports.approvePayout = asyncHandler(async (req, res, next) => {
     if (bank?.accountNumber && bank?.bankCode) {
       try {
         const settings = await PlatformSettings.findOne().lean()
-        const key = settings?.paystackSecretKey || process.env.PAYSTACK_SECRET_KEY
+        const key =
+          settings?.paystackSecretKey || process.env.PAYSTACK_SECRET_KEY
         if (settings?.paystackEnabled && key) {
-          const doctorUser = await User.findById(doctorEarning.doctor).select('name').lean()
+          const doctorUser = await User.findById(doctorEarning.doctor)
+            .select('name')
+            .lean()
           const recipient = await createTransferRecipient({
-            name: bank.accountName || doctorProfile.displayName || doctorUser?.name || 'Doctor',
+            name:
+              bank.accountName ||
+              doctorProfile.displayName ||
+              doctorUser?.name ||
+              'Doctor',
             accountNumber: bank.accountNumber,
             bankCode: bank.bankCode
           })
           await initiateTransfer({
             amount: doctorEarning.netAmount,
             recipient: recipient.recipient_code,
-            reason: `iBam Health payout – Dr. ${doctorUser?.name ?? ''}`
+            reason: `iBam Health payout â€“ Dr. ${doctorUser?.name ?? ''}`
           })
           transferred = true
         }
@@ -480,9 +619,16 @@ exports.approvePayout = asyncHandler(async (req, res, next) => {
       userId: doctorEarning.doctor,
       type: 'payout_processed',
       title: 'Payout Processed',
-      message: `Your payout of ₦${doctorEarning.netAmount.toLocaleString('en-NG')} has been ${transferred ? 'transferred to your bank account' : 'processed'}.`
+      message: `Your payout of ₦${doctorEarning.netAmount.toLocaleString(
+        'en-NG'
+      )} has been ${
+        transferred ? 'transferred to your bank account' : 'processed'
+      }.`
     })
-    return sendSuccess(res, 200, 'Payout approved.', { earning: doctorEarning, transferred })
+    return sendSuccess(res, 200, 'Payout approved.', {
+      earning: doctorEarning,
+      transferred
+    })
   }
 
   // Partner payout request (consolidated)
@@ -507,7 +653,7 @@ exports.approvePayout = asyncHandler(async (req, res, next) => {
         await initiateTransfer({
           amount: request.totalNet,
           recipient: recipient.recipient_code,
-          reason: `iBam Health payout – ${request.partnerName}`
+          reason: `iBam Health payout â€“ ${request.partnerName}`
         })
         transferred = true
       }
@@ -553,7 +699,7 @@ exports.updateTriageQuestions = asyncHandler(async (req, res) => {
   })
 })
 
-// ─── Live monitoring ────────────────────────────────────
+// â”€â”€â”€ Live monitoring â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.getLiveConsultations = asyncHandler(async (req, res) => {
   const consultations = await Consultation.find({ status: 'active' })
     .populate({
@@ -597,7 +743,7 @@ exports.getConsultationMessages = asyncHandler(async (req, res, next) => {
   sendSuccess(res, 200, 'Messages retrieved.', { messages })
 })
 
-// ─── Pharmacy management ────────────────────────────────
+// â”€â”€â”€ Pharmacy management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.getPharmacies = asyncHandler(async (req, res) => {
   const { status, page = 1, limit = 20 } = req.query
   const filter = {}
@@ -620,7 +766,7 @@ exports.updatePharmacyStatus = asyncHandler(async (req, res, next) => {
   const pharmacy = await PharmacyPartner.findByIdAndUpdate(
     req.params.id,
     { status },
-    { new: true }
+    { returnDocument: 'after' }
   )
   if (!pharmacy) return next(new AppError('Pharmacy not found.', 404))
 
@@ -652,7 +798,7 @@ exports.updatePharmacyStatus = asyncHandler(async (req, res, next) => {
   sendSuccess(res, 200, 'Pharmacy status updated.', { pharmacy })
 })
 
-// ─── Lab management ─────────────────────────────────────
+// â”€â”€â”€ Lab management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.getLabs = asyncHandler(async (req, res) => {
   const { status, page = 1, limit = 20 } = req.query
   const filter = {}
@@ -681,7 +827,7 @@ exports.updateLabTests = asyncHandler(async (req, res, next) => {
   const lab = await LabPartner.findByIdAndUpdate(
     req.params.id,
     { testsOffered: cleaned },
-    { new: true }
+    { returnDocument: 'after' }
   )
   if (!lab) return next(new AppError('Lab not found.', 404))
   sendSuccess(res, 200, 'Lab tests updated.', { lab })
@@ -695,7 +841,7 @@ exports.updateLabStatus = asyncHandler(async (req, res, next) => {
   const lab = await LabPartner.findByIdAndUpdate(
     req.params.id,
     { status },
-    { new: true }
+    { returnDocument: 'after' }
   )
   if (!lab) return next(new AppError('Lab not found.', 404))
 
@@ -727,7 +873,7 @@ exports.updateLabStatus = asyncHandler(async (req, res, next) => {
   sendSuccess(res, 200, 'Lab status updated.', { lab })
 })
 
-// ─── Diagnostics management ─────────────────────────────
+// â”€â”€â”€ Diagnostics management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.getDiagnosticsRequests = asyncHandler(async (req, res) => {
   const { status, page = 1, limit = 20, search } = req.query
   const filter = {}
@@ -764,24 +910,38 @@ exports.getDiagnosticsRequests = asyncHandler(async (req, res) => {
   const requests = await DiagnosticsRequest.find(filter)
     .populate('patient', 'name email phone')
     .populate('lab', 'name address phone')
-    .populate({ path: 'paymentRef', select: 'status amount reference method transferReference' })
+    .populate({
+      path: 'paymentRef',
+      select: 'status amount reference method transferReference'
+    })
     .sort({ createdAt: -1 })
     .skip((page - 1) * limit)
     .limit(Number(limit))
   const total = await DiagnosticsRequest.countDocuments(filter)
 
   const requestIds = requests.map(r => r._id)
-  const labResults = await LabResult.find({ request: { $in: requestIds } }).lean()
+  const labResults = await LabResult.find({
+    request: { $in: requestIds }
+  }).lean()
   const resultMap = {}
   for (const lr of labResults) resultMap[lr.request.toString()] = lr
   const enriched = requests.map(r => {
     const obj = r.toObject()
     const lr = resultMap[r._id.toString()]
-    if (lr) obj.result = { _id: lr._id, fileUrl: lr.fileUrl, notes: lr.notes, createdAt: lr.createdAt }
+    if (lr)
+      obj.result = {
+        _id: lr._id,
+        fileUrl: lr.fileUrl,
+        notes: lr.notes,
+        createdAt: lr.createdAt
+      }
     return obj
   })
 
-  sendSuccess(res, 200, 'Diagnostics requests retrieved.', { requests: enriched, total })
+  sendSuccess(res, 200, 'Diagnostics requests retrieved.', {
+    requests: enriched,
+    total
+  })
 })
 
 exports.getSubscriptions = asyncHandler(async (req, res) => {
@@ -799,7 +959,7 @@ exports.getSubscriptions = asyncHandler(async (req, res) => {
   sendSuccess(res, 200, 'Subscriptions retrieved.', { subscriptions, total })
 })
 
-// ─── All orders (pharmacy) ───────────────────────────────
+// â”€â”€â”€ All orders (pharmacy) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.getAllOrders = asyncHandler(async (req, res) => {
   const { status, orderType, pharmacyId, page = 1, limit = 25 } = req.query
   const filter = {}
@@ -818,10 +978,10 @@ exports.getAllOrders = asyncHandler(async (req, res) => {
   sendSuccess(res, 200, 'All orders retrieved.', { orders, total })
 })
 
-// ─── All lab / diagnostics requests ─────────────────────
-// (re-exported alias — getDiagnosticsRequests already covers this)
+// â”€â”€â”€ All lab / diagnostics requests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// (re-exported alias  getDiagnosticsRequests already covers this)
 
-// ─── Audit log ───────────────────────────────────────────
+// â”€â”€â”€ Audit log â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.getAuditLogs = asyncHandler(async (req, res) => {
   const { action, adminId, page = 1, limit = 30 } = req.query
   const filter = {}
@@ -837,7 +997,7 @@ exports.getAuditLogs = asyncHandler(async (req, res) => {
   sendSuccess(res, 200, 'Audit logs retrieved.', { logs, total })
 })
 
-// ─── Platform settings ───────────────────────────────────
+// â”€â”€â”€ Platform settings â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.getPublicContent = asyncHandler(async (req, res) => {
   let settings = await PlatformSettings.findOne().select(
     'healthTips announcement'
@@ -885,7 +1045,7 @@ exports.getPublicContent = asyncHandler(async (req, res) => {
 exports.getSettings = asyncHandler(async (req, res) => {
   let settings = await PlatformSettings.findOne().lean()
   if (!settings) settings = await PlatformSettings.create({})
-  // Never expose secret key to client — send a flag instead
+  // Never expose secret key to client  send a flag instead
   const out = {
     ...settings,
     paystackSecretKey: undefined,
@@ -975,7 +1135,7 @@ exports.updateSettings = asyncHandler(async (req, res, next) => {
 
   const settings = await PlatformSettings.findOneAndUpdate({}, update, {
     upsert: true,
-    new: true
+    returnDocument: 'after'
   }).lean()
   const out = {
     ...settings,
@@ -985,7 +1145,7 @@ exports.updateSettings = asyncHandler(async (req, res, next) => {
   sendSuccess(res, 200, 'Settings updated.', { settings: out })
 })
 
-// ─── Plan management ─────────────────────────────────────
+// â”€â”€â”€ Plan management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.listPlans = asyncHandler(async (req, res) => {
   const plans = await SubscriptionPlan.find().sort({ price: 1 })
   sendSuccess(res, 200, 'Plans retrieved.', { plans })
@@ -1038,7 +1198,7 @@ exports.updatePlan = asyncHandler(async (req, res, next) => {
       featured,
       paystackPlanCode
     },
-    { new: true, runValidators: true }
+    { returnDocument: 'after', runValidators: true }
   )
   if (!plan) return next(new AppError('Plan not found.', 404))
   sendSuccess(res, 200, 'Plan updated.', { plan })
@@ -1048,13 +1208,13 @@ exports.deletePlan = asyncHandler(async (req, res, next) => {
   const plan = await SubscriptionPlan.findByIdAndUpdate(
     req.params.id,
     { isActive: false },
-    { new: true }
+    { returnDocument: 'after' }
   )
   if (!plan) return next(new AppError('Plan not found.', 404))
   sendSuccess(res, 200, 'Plan deactivated.', { plan })
 })
 
-// ─── Drug catalog management ─────────────────────────────
+// â”€â”€â”€ Drug catalog management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.getAllDrugs = asyncHandler(async (req, res) => {
   const pharmacies = await PharmacyPartner.find({ status: 'active' }).select(
     'name address drugsOffered'
@@ -1094,7 +1254,7 @@ exports.approveDrug = asyncHandler(async (req, res, next) => {
   sendSuccess(res, 200, 'Drug approval updated.', { drug })
 })
 
-// ─── Pending approvals ───────────────────────────────────
+// â”€â”€â”€ Pending approvals â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.getPendingApprovals = asyncHandler(async (req, res) => {
   const [orders, testRequests] = await Promise.all([
     PharmacyOrder.find({
@@ -1171,7 +1331,7 @@ exports.approveTestRequest = asyncHandler(async (req, res, next) => {
   sendSuccess(res, 200, 'Test request approval updated.', { request: req_ })
 })
 
-// ─── Admin-initiated registration ────────────────────────────────────────────
+// â”€â”€â”€ Admin-initiated registration â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 exports.createDoctor = asyncHandler(async (req, res, next) => {
   const {
@@ -1586,7 +1746,7 @@ exports.manualKycVerify = asyncHandler(async (req, res, next) => {
   sendSuccess(res, 200, 'KYC status updated.', { user })
 })
 
-// ─── Broadcast message ────────────────────────────────────────────────────────
+// â”€â”€â”€ Broadcast message â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // POST /admin/broadcast
 // body: { title, message, roles?: string[], channels?: ('push'|'email'|'in_app')[] }
 exports.broadcastMessage = asyncHandler(async (req, res, next) => {
@@ -1659,7 +1819,7 @@ exports.broadcastMessage = asyncHandler(async (req, res, next) => {
   })
 })
 
-// ─── Specialization management ────────────────────────────────────────────────
+// â”€â”€â”€ Specialization management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 exports.listSpecializations = asyncHandler(async (req, res) => {
   const specs = await Specialization.find().sort({ order: 1, name: 1 })
@@ -1680,7 +1840,7 @@ exports.updateSpecialization = asyncHandler(async (req, res, next) => {
   const spec = await Specialization.findByIdAndUpdate(
     req.params.id,
     { name, description, isActive, order },
-    { new: true, runValidators: true }
+    { returnDocument: 'after', runValidators: true }
   )
   if (!spec) return next(new AppError('Specialization not found.', 404))
   sendSuccess(res, 200, 'Specialization updated.', { specialization: spec })
@@ -1692,7 +1852,7 @@ exports.deleteSpecialization = asyncHandler(async (req, res, next) => {
   sendSuccess(res, 200, 'Specialization deleted.')
 })
 
-// ─── Platform service management ──────────────────────────────────────────────
+// â”€â”€â”€ Platform service management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 exports.listServices = asyncHandler(async (req, res) => {
   const services = await PlatformService.find().sort({ order: 1 })
@@ -1764,7 +1924,7 @@ exports.updateService = asyncHandler(async (req, res, next) => {
       order,
       isActive
     },
-    { new: true, runValidators: true }
+    { returnDocument: 'after', runValidators: true }
   )
   if (!service) return next(new AppError('Service not found.', 404))
   sendSuccess(res, 200, 'Service updated.', { service })
@@ -1776,7 +1936,7 @@ exports.deleteService = asyncHandler(async (req, res, next) => {
   sendSuccess(res, 200, 'Service deleted.')
 })
 
-// ─── Lab test catalog ──────────────────────────────────────────────────────────
+// â”€â”€â”€ Lab test catalog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 exports.listLabTests = asyncHandler(async (req, res) => {
   const labTests = await LabTest.find().sort({ order: 1, name: 1 })
@@ -1832,7 +1992,7 @@ exports.updateLabTest = asyncHandler(async (req, res, next) => {
   if (homeVisitPrice !== undefined) update.homeVisitPrice = homeVisitPrice
   if (estimatedPrice !== undefined) update.estimatedPrice = estimatedPrice
   const labTest = await LabTest.findByIdAndUpdate(req.params.id, update, {
-    new: true,
+    returnDocument: 'after',
     runValidators: true
   })
   if (!labTest) return next(new AppError('Lab test not found.', 404))

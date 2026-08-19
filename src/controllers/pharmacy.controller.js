@@ -1,4 +1,4 @@
-const { randomUUID } = require('crypto')
+﻿const { randomUUID } = require('crypto')
 const PharmacyPartner = require('../models/PharmacyPartner')
 const PharmacyOrder = require('../models/PharmacyOrder')
 const Payment = require('../models/Payment')
@@ -9,7 +9,10 @@ const {
   createNotification,
   notifyAdmins
 } = require('../services/notification.service')
-const { sendAdminAlertEmail, sendPharmacyOrderConfirmedEmail } = require('../services/email.service')
+const {
+  sendAdminAlertEmail,
+  sendPharmacyOrderConfirmedEmail
+} = require('../services/email.service')
 const { sendSuccess } = require('../utils/response')
 const AppError = require('../utils/AppError')
 const asyncHandler = require('../utils/asyncHandler')
@@ -156,7 +159,7 @@ exports.uploadPharmacyLogo = asyncHandler(async (req, res, next) => {
   sendSuccess(res, 200, 'Logo updated.', { logo: partner.logo })
 })
 
-// ─── Drug Catalog ────────────────────────────────────────────────────────────
+// â”€â”€â”€ Drug Catalog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 exports.getOwnCatalog = asyncHandler(async (req, res, next) => {
   const partner = await PharmacyPartner.findOne({ user: req.user._id })
@@ -204,7 +207,7 @@ exports.getPublicCatalog = asyncHandler(async (req, res, next) => {
   sendSuccess(res, 200, 'Catalog retrieved.', { partner, drugs: approvedDrugs })
 })
 
-// ─── Orders ──────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Orders â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 exports.placeOrder = asyncHandler(async (req, res, next) => {
   const { prescriptionId, pharmacyId, fulfillmentType, deliveryAddress } =
@@ -238,7 +241,11 @@ exports.placeOrder = asyncHandler(async (req, res, next) => {
     })
     if (catalogDrug) {
       totalAmount += catalogDrug.price
-      matchedItems.push({ name: catalogDrug.name, price: catalogDrug.price, qty: 1 })
+      matchedItems.push({
+        name: catalogDrug.name,
+        price: catalogDrug.price,
+        qty: 1
+      })
     }
   }
 
@@ -275,16 +282,19 @@ exports.placeOrder = asyncHandler(async (req, res, next) => {
       userId: req.user._id,
       type: 'pharmacy_order_placed',
       title: 'Pharmacy Order Placed',
-      message: 'Your prescription order has been submitted and is awaiting processing.',
+      message:
+        'Your prescription order has been submitted and is awaiting processing.',
       metadata: { orderId: order._id },
       emailData: { pharmacyName: pharmacy.name, items: prescriptionItems }
-    }).catch(err => console.error('[Notification] Pharmacy order placed:', err.message))
+    }).catch(err =>
+      console.error('[Notification] Pharmacy order placed:', err.message)
+    )
 
     sendPharmacyOrderConfirmedEmail({
       email: req.user.email,
       name: req.user.name,
       pharmacyName: pharmacy.name,
-      items: prescriptionItems,
+      items: prescriptionItems
     }).catch(() => {})
   }
 
@@ -399,7 +409,7 @@ exports.placeDirectOrder = asyncHandler(async (req, res, next) => {
   // Only alert admin immediately for prescription orders needing approval; normal orders notified after payment
   if (requiresApproval) {
     sendAdminAlertEmail({
-      subject: `Pharmacy order awaiting approval — ${req.user.name}`,
+      subject: `Pharmacy order awaiting approval  ${req.user.name}`,
       headline: 'Pharmacy Order Pending Approval',
       body: `${req.user.name || 'A patient'} placed an order from ${
         pharmacy.name
@@ -416,7 +426,7 @@ exports.placeDirectOrder = asyncHandler(async (req, res, next) => {
       title: 'Order Awaiting Approval',
       message: `${req.user.name || 'A patient'} ordered from ${
         pharmacy.name
-      } — contains prescription drugs, requires approval.`,
+      }  contains prescription drugs, requires approval.`,
       metadata: {
         orderId: order._id,
         patientId: req.user._id,
@@ -437,19 +447,116 @@ exports.placeDirectOrder = asyncHandler(async (req, res, next) => {
         : `Your order from ${pharmacy.name} has been placed successfully.`,
       metadata: { orderId: order._id },
       emailData: { pharmacyName: pharmacy.name, items: orderItems }
-    }).catch(err => console.error('[Notification] Direct order placed:', err.message))
+    }).catch(err =>
+      console.error('[Notification] Direct order placed:', err.message)
+    )
 
     if (totalAmount === 0) {
       sendPharmacyOrderConfirmedEmail({
         email: req.user.email,
         name: req.user.name,
         pharmacyName: pharmacy.name,
-        items: orderItems,
+        items: orderItems
       }).catch(() => {})
     }
   }
 
   sendSuccess(res, 201, 'Order placed.', { order, requiresApproval })
+})
+
+// â”€â”€ Multi-pharmacy batch checkout â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Creates one PharmacyOrder per pharmacy; the client uses the returned orderIds
+// and batchTotal to initiate a single Paystack payment of type 'pharmacy_batch'.
+exports.placeBatchOrders = asyncHandler(async (req, res, next) => {
+  const { groups, fulfillmentType, deliveryAddress, notes } = req.body
+  // groups: [{ pharmacyId, items: [{ drugId, qty }] }]
+  if (!Array.isArray(groups) || groups.length === 0) {
+    return next(new AppError('groups array is required.', 400))
+  }
+  if (!fulfillmentType)
+    return next(new AppError('fulfillmentType is required.', 400))
+  if (fulfillmentType === 'delivery' && !deliveryAddress) {
+    return next(new AppError('deliveryAddress required for delivery.', 400))
+  }
+
+  const createdOrders = []
+  let batchTotal = 0
+  let requiresApproval = false
+
+  for (const group of groups) {
+    const { pharmacyId, items } = group
+    if (!pharmacyId || !Array.isArray(items) || items.length === 0) continue
+
+    const pharmacy = await PharmacyPartner.findById(pharmacyId)
+    if (!pharmacy || pharmacy.status !== 'active') {
+      return next(
+        new AppError(`Pharmacy ${pharmacyId} not found or inactive.`, 404)
+      )
+    }
+
+    let groupTotal = 0
+    let groupNeedsApproval = false
+    const orderItems = []
+
+    for (const item of items) {
+      const drug = pharmacy.drugsOffered.find(
+        d => String(d._id) === String(item.drugId)
+      )
+      if (!drug)
+        return next(new AppError(`Drug not in ${pharmacy.name} catalog.`, 400))
+      if (!drug.inStock)
+        return next(
+          new AppError(`${drug.name} is out of stock at ${pharmacy.name}.`, 400)
+        )
+      const qty = Math.max(1, parseInt(item.qty) || 1)
+      groupTotal += drug.price * qty
+      if (drug.requiresPrescription) groupNeedsApproval = true
+      orderItems.push({ name: drug.name, price: drug.price, qty })
+    }
+
+    if (groupNeedsApproval) requiresApproval = true
+
+    const order = await PharmacyOrder.create({
+      orderType: 'direct',
+      items: orderItems,
+      patient: req.user._id,
+      pharmacy: pharmacyId,
+      fulfillmentType,
+      deliveryAddress,
+      totalAmount: groupTotal,
+      requiresApproval: groupNeedsApproval,
+      adminApprovalStatus: groupNeedsApproval ? 'pending' : 'na',
+      notes
+    })
+
+    batchTotal += groupTotal
+    createdOrders.push({
+      orderId: order._id,
+      pharmacyId,
+      pharmacyName: pharmacy.name,
+      total: groupTotal
+    })
+
+    if (groupNeedsApproval) {
+      notifyAdmins({
+        type: 'pharmacy_order_placed',
+        title: 'Batch Order  Approval Needed',
+        message: `${req.user.name} ordered from ${pharmacy.name} with prescription items requiring approval.`,
+        metadata: { orderId: order._id, patientId: req.user._id }
+      }).catch(() => {})
+    }
+  }
+
+  if (createdOrders.length === 0) {
+    return next(new AppError('No valid order groups provided.', 400))
+  }
+
+  sendSuccess(res, 201, 'Batch orders created.', {
+    orders: createdOrders,
+    orderIds: createdOrders.map(o => o.orderId),
+    batchTotal,
+    requiresApproval
+  })
 })
 
 exports.updateOrderStatus = asyncHandler(async (req, res, next) => {
@@ -507,23 +614,25 @@ exports.updateOrderStatus = asyncHandler(async (req, res, next) => {
 })
 
 exports.cancelMyOrder = asyncHandler(async (req, res, next) => {
-  const order = await PharmacyOrder.findOne({ _id: req.params.id, patient: req.user._id })
+  const order = await PharmacyOrder.findOne({
+    _id: req.params.id,
+    patient: req.user._id
+  })
   if (!order) return next(new AppError('Order not found.', 404))
-  if (order.paymentRef) return next(new AppError('Cannot cancel a paid order.', 400))
-  if (order.status === 'cancelled') return sendSuccess(res, 200, 'Already cancelled.', {})
+  if (order.paymentRef)
+    return next(new AppError('Cannot cancel a paid order.', 400))
+  if (order.status === 'cancelled')
+    return sendSuccess(res, 200, 'Already cancelled.', {})
   order.status = 'cancelled'
   await order.save()
   sendSuccess(res, 200, 'Order cancelled.', {})
 })
 
 exports.getMyOrders = asyncHandler(async (req, res) => {
-  // Only show orders that are paid or free — abandoned pre-payment orders are excluded
+  // Only show orders that are paid or free  abandoned pre-payment orders are excluded
   const orders = await PharmacyOrder.find({
     patient: req.user._id,
-    $or: [
-      { paymentRef: { $exists: true } },
-      { totalAmount: 0 },
-    ],
+    $or: [{ paymentRef: { $exists: true } }, { totalAmount: 0 }]
   })
     .populate('pharmacy', 'name address phone')
     .populate('prescription', 'medications diagnosis')
@@ -539,28 +648,20 @@ exports.getPharmacyProfile = asyncHandler(async (req, res, next) => {
 })
 
 exports.updatePharmacyProfile = asyncHandler(async (req, res, next) => {
-  const {
-    name,
-    address,
-    phone,
-    coverageAreas,
-    operatingHours,
-    bankAccount,
-    logo
-  } = req.body
+  const { name, address, phone, coverageAreas, operatingHours, logo } = req.body
+  // bankAccount is intentionally excluded  use POST /api/kyc/verify-bank instead
   const update = {
     ...(name && { name }),
     ...(address && { address }),
     ...(phone && { phone }),
     ...(coverageAreas && { coverageAreas }),
     ...(operatingHours && { operatingHours }),
-    ...(bankAccount && typeof bankAccount === 'object' && { bankAccount }),
     ...(logo !== undefined && { logo })
   }
   const partner = await PharmacyPartner.findOneAndUpdate(
     { user: req.user._id },
     update,
-    { new: true, runValidators: true }
+    { returnDocument: 'after', runValidators: true }
   )
   if (!partner)
     return next(new AppError('Pharmacy partner record not found.', 404))
@@ -588,7 +689,7 @@ exports.getPartnerOrders = asyncHandler(async (req, res) => {
 
 exports.getPharmacyEarnings = asyncHandler(async (req, res) => {
   const PartnerEarning = require('../models/PartnerEarning')
-  const PayoutRequest  = require('../models/PayoutRequest')
+  const PayoutRequest = require('../models/PayoutRequest')
 
   const earnings = await PartnerEarning.find({
     partner: req.user._id,
@@ -598,14 +699,33 @@ exports.getPharmacyEarnings = asyncHandler(async (req, res) => {
   const now = new Date()
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
   const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1)
-  const endOfLastMonth   = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999)
+  const endOfLastMonth = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    0,
+    23,
+    59,
+    59,
+    999
+  )
 
   // Last 6 months breakdown for mini chart
   const monthly = []
   for (let i = 5; i >= 0; i--) {
     const start = new Date(now.getFullYear(), now.getMonth() - i, 1)
-    const end   = new Date(now.getFullYear(), now.getMonth() - i + 1, 0, 23, 59, 59, 999)
-    const label = start.toLocaleDateString('en-NG', { month: 'short', year: '2-digit' })
+    const end = new Date(
+      now.getFullYear(),
+      now.getMonth() - i + 1,
+      0,
+      23,
+      59,
+      59,
+      999
+    )
+    const label = start.toLocaleDateString('en-NG', {
+      month: 'short',
+      year: '2-digit'
+    })
     const bucket = earnings.filter(e => {
       const t = new Date(e.createdAt)
       return t >= start && t <= end
@@ -613,18 +733,19 @@ exports.getPharmacyEarnings = asyncHandler(async (req, res) => {
     monthly.push({
       label,
       net: Math.round(bucket.reduce((a, e) => a + e.netAmount, 0) * 100) / 100,
-      gross: Math.round(bucket.reduce((a, e) => a + e.grossAmount, 0) * 100) / 100,
-      count: bucket.length,
+      gross:
+        Math.round(bucket.reduce((a, e) => a + e.grossAmount, 0) * 100) / 100,
+      count: bucket.length
     })
   }
 
   const totals = earnings.reduce(
     (acc, e) => {
       acc.gross += e.grossAmount
-      acc.net   += e.netAmount
-      if (e.payoutStatus === 'pending')   acc.pending   += e.netAmount
+      acc.net += e.netAmount
+      if (e.payoutStatus === 'pending') acc.pending += e.netAmount
       if (e.payoutStatus === 'requested') acc.requested += e.netAmount
-      if (e.payoutStatus === 'paid')      acc.paid      += e.netAmount
+      if (e.payoutStatus === 'paid') acc.paid += e.netAmount
       return acc
     },
     { gross: 0, net: 0, pending: 0, requested: 0, paid: 0 }
@@ -635,11 +756,17 @@ exports.getPharmacyEarnings = asyncHandler(async (req, res) => {
     .reduce((a, e) => a + e.netAmount, 0)
 
   const lastMonth = earnings
-    .filter(e => { const t = new Date(e.createdAt); return t >= startOfLastMonth && t <= endOfLastMonth })
+    .filter(e => {
+      const t = new Date(e.createdAt)
+      return t >= startOfLastMonth && t <= endOfLastMonth
+    })
     .reduce((a, e) => a + e.netAmount, 0)
 
   // Payout request history for this partner
-  const payoutHistory = await PayoutRequest.find({ partner: req.user._id, partnerType: 'pharmacy' })
+  const payoutHistory = await PayoutRequest.find({
+    partner: req.user._id,
+    partnerType: 'pharmacy'
+  })
     .sort({ requestedAt: -1 })
     .limit(10)
     .lean()
@@ -650,7 +777,7 @@ exports.getPharmacyEarnings = asyncHandler(async (req, res) => {
     monthly,
     thisMonth: Math.round(thisMonth * 100) / 100,
     lastMonth: Math.round(lastMonth * 100) / 100,
-    payoutHistory,
+    payoutHistory
   })
 })
 

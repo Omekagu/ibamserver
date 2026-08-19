@@ -4,9 +4,11 @@ const { protect } = require('../middleware/auth');
 
 router.use(protect);
 
-router.get('/status',       ctrl.getStatus);
-router.post('/verify-nin',  ctrl.verifyNIN);
-router.post('/verify-face', ctrl.verifyFace);
-router.post('/verify-cac',  ctrl.verifyCAC);
+router.get('/status',        ctrl.getStatus);
+router.post('/verify-nin',   ctrl.verifyNIN);
+router.post('/verify-face',  ctrl.verifyFace);
+router.post('/verify-cac',   ctrl.verifyCAC);
+router.post('/verify-bank',   ctrl.verifyBankAccount);
+router.post('/confirm-bank', ctrl.confirmBankAccount);
 
 module.exports = router;

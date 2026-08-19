@@ -1,4 +1,4 @@
-const User = require('../models/User');
+﻿const User = require('../models/User');
 const Patient = require('../models/Patient');
 const Doctor = require('../models/Doctor');
 const { uploadBuffer } = require('../services/cloudinary.service');
@@ -20,14 +20,14 @@ exports.updateProfile = asyncHandler(async (req, res, next) => {
   if (name) updates.name = name;
   if (phone) updates.phone = phone;
 
-  const user = await User.findByIdAndUpdate(req.user._id, updates, { new: true, runValidators: true });
+  const user = await User.findByIdAndUpdate(req.user._id, updates, { returnDocument: 'after', runValidators: true });
 
   if (req.user.role === 'patient') {
     const { dateOfBirth, gender, bloodGroup, allergies, emergencyContact } = req.body;
     await Patient.findOneAndUpdate(
       { user: req.user._id },
       { dateOfBirth, gender, bloodGroup, allergies, emergencyContact },
-      { new: true, runValidators: true }
+      { returnDocument: 'after', runValidators: true }
     );
   }
 
@@ -36,7 +36,7 @@ exports.updateProfile = asyncHandler(async (req, res, next) => {
     await Doctor.findOneAndUpdate(
       { user: req.user._id },
       { bio, consultationFee, yearsOfExperience },
-      { new: true }
+      { returnDocument: 'after' }
     );
   }
 
@@ -50,7 +50,7 @@ exports.uploadAvatar = asyncHandler(async (req, res, next) => {
     const user = await User.findByIdAndUpdate(
       req.user._id,
       { avatar: directUrl },
-      { new: true }
+      { returnDocument: 'after' }
     );
     return sendSuccess(res, 200, 'Avatar updated.', { avatar: user.avatar });
   }
@@ -59,7 +59,7 @@ exports.uploadAvatar = asyncHandler(async (req, res, next) => {
   const user = await User.findByIdAndUpdate(
     req.user._id,
     { avatar: result.secure_url },
-    { new: true }
+    { returnDocument: 'after' }
   );
   sendSuccess(res, 200, 'Avatar uploaded.', { avatar: user.avatar });
 });
@@ -70,7 +70,8 @@ exports.addMedicalHistory = asyncHandler(async (req, res, next) => {
   const patient = await Patient.findOneAndUpdate(
     { user: req.user._id },
     { $push: { medicalHistory: { condition, diagnosedDate, notes } } },
-    { new: true }
+    { returnDocument: 'after' }
   );
   sendSuccess(res, 200, 'Medical history updated.', { medicalHistory: patient.medicalHistory });
 });
+

@@ -41,9 +41,17 @@ const pharmacyPartnerSchema = new mongoose.Schema(
       accountNumber: { type: String },
       accountName:   { type: String },
       bankCode:      { type: String },
+      verified:      { type: Boolean, default: false },
+      verifiedAt:    { type: Date },
     },
   },
   { timestamps: true }
+);
+
+// Prevent two verified partners sharing the same account number + bank code
+pharmacyPartnerSchema.index(
+  { 'bankAccount.accountNumber': 1, 'bankAccount.bankCode': 1 },
+  { unique: true, sparse: true, partialFilterExpression: { 'bankAccount.verified': true } }
 );
 
 module.exports = mongoose.model('PharmacyPartner', pharmacyPartnerSchema);

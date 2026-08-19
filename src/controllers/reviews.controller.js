@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+﻿const mongoose = require('mongoose');
 const Review = require('../models/Review');
 const Doctor = require('../models/Doctor');
 const { sendSuccess } = require('../utils/response');
@@ -21,7 +21,7 @@ exports.create = asyncHandler(async (req, res, next) => {
       comment: comment?.trim() || undefined,
       appointment: appointmentId,
     },
-    { upsert: true, new: true, setDefaultsOnInsert: true }
+    { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
   );
 
   if (targetType === 'doctor') {
@@ -64,3 +64,4 @@ exports.myReviewFor = asyncHandler(async (req, res) => {
   }).lean();
   sendSuccess(res, 200, 'Review retrieved.', { review: review ?? null });
 });
+

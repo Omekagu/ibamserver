@@ -1,4 +1,4 @@
-const Doctor = require('../models/Doctor')
+﻿const Doctor = require('../models/Doctor')
 const User = require('../models/User')
 const Availability = require('../models/Availability')
 const Appointment = require('../models/Appointment')
@@ -86,10 +86,10 @@ exports.updateMyProfile = asyncHandler(async (req, res, next) => {
     urgentSurcharge,
     fees,
     isAvailable,
-    bankAccount,
     displayName,
     socialLinks
   } = req.body
+  // bankAccount is intentionally excluded  use POST /api/kyc/verify-bank instead
   const update = {
     bio,
     consultationFee,
@@ -102,13 +102,11 @@ exports.updateMyProfile = asyncHandler(async (req, res, next) => {
   }
   if (typeof isAvailable === 'boolean') update.isAvailable = isAvailable
   if (fees && typeof fees === 'object') update.fees = fees
-  if (bankAccount && typeof bankAccount === 'object')
-    update.bankAccount = bankAccount
   if (displayName !== undefined) update.displayName = displayName
   if (socialLinks && typeof socialLinks === 'object')
     update.socialLinks = socialLinks
   const doctor = await Doctor.findOneAndUpdate({ user: req.user._id }, update, {
-    new: true,
+    returnDocument: 'after',
     runValidators: true
   }).populate('user', 'name email phone avatar')
   if (!doctor) return next(new AppError('Doctor profile not found.', 404))
@@ -141,7 +139,7 @@ exports.setAvailability = asyncHandler(async (req, res, next) => {
       slots,
       isActive: true
     },
-    { upsert: true, new: true }
+    { upsert: true, returnDocument: 'after' }
   )
   sendSuccess(res, 200, 'Availability set.', { availability })
 })
@@ -187,7 +185,7 @@ exports.getMyAvailability = asyncHandler(async (req, res) => {
   const today = new Date()
   today.setHours(0, 0, 0, 0)
 
-  // Auto-delete past one-off dates that have no booked slots — they're stale
+  // Auto-delete past one-off dates that have no booked slots  they're stale
   await Availability.deleteMany({
     doctor: req.user._id,
     type: 'one_off',
@@ -203,11 +201,20 @@ exports.getMyAvailability = asyncHandler(async (req, res) => {
 })
 
 exports.deleteAvailability = asyncHandler(async (req, res, next) => {
-  const availability = await Availability.findOne({ _id: req.params.id, doctor: req.user._id })
+  const availability = await Availability.findOne({
+    _id: req.params.id,
+    doctor: req.user._id
+  })
   if (!availability) return next(new AppError('Availability not found.', 404))
 
   const hasBooked = availability.slots.some(s => s.isBooked)
-  if (hasBooked) return next(new AppError('Cannot delete availability with active booked appointments.', 400))
+  if (hasBooked)
+    return next(
+      new AppError(
+        'Cannot delete availability with active booked appointments.',
+        400
+      )
+    )
 
   await availability.deleteOne()
   sendSuccess(res, 200, 'Availability deleted.', {})

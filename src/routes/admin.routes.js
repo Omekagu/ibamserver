@@ -22,8 +22,9 @@ router.get('/appointments', ctrl.getAppointments);
 router.get('/payments', ctrl.getPayments);
 router.put('/payments/:id/confirm', audit('confirm_payment', 'Payment'), ctrl.confirmPayment);
 router.get('/subscriptions', ctrl.getSubscriptions);
-router.get('/payouts', ctrl.getPayouts);
+router.get('/payouts',          ctrl.getPayouts);
 router.put('/payouts/:id/approve', audit('approve_payout', 'DoctorEarning'), ctrl.approvePayout);
+router.get('/earnings',         ctrl.getEarningHistory);
 router.get('/partners', ctrl.getPartners);
 router.put('/triage/questions', audit('update_triage_questions', 'Triage'), ctrl.updateTriageQuestions);
 

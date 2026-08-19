@@ -61,6 +61,14 @@ const createTransferRecipient = async ({ type = 'nuban', name, accountNumber, ba
   return data.data;
 };
 
+const resolveAccount = async ({ accountNumber, bankCode }) => {
+  const client = await getClient();
+  const { data } = await client.get(
+    `/bank/resolve?account_number=${accountNumber}&bank_code=${bankCode}`
+  );
+  return data.data; // { account_number, account_name, bank_id }
+};
+
 const initiateTransfer = async ({ amount, recipient, reason = '' }) => {
   const client = await getClient();
   const { data } = await client.post('/transfer', {
@@ -80,4 +88,5 @@ module.exports = {
   cancelSubscription,
   createTransferRecipient,
   initiateTransfer,
+  resolveAccount,
 };

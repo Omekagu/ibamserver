@@ -147,7 +147,7 @@ After login the patient lands on the **Home** tab:
    - **Walk-in** — visit the lab yourself.
    - **Home Visit** — a field agent collects the sample at your address.
 4. Confirm address (for home visit) and preferred date.
-5. Pay via Paystack.
+5. Pay .
 6. Request confirmed. For home visit, a field agent is assigned (you receive notification).
 7. Track status: `Pending → Collected → Processing → Result Uploaded`.
 8. When results are ready: push notification + email → view/download from **Records → Lab Results**.

@@ -50,6 +50,8 @@ const doctorSchema = new mongoose.Schema(
       accountNumber: { type: String },
       accountName:   { type: String },
       bankCode:      { type: String },
+      verified:      { type: Boolean, default: false },
+      verifiedAt:    { type: Date },
     },
     displayName: { type: String },
     socialLinks: {
