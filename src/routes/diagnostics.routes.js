@@ -3,6 +3,14 @@ const ctrl = require('../controllers/diagnostics.controller');
 const { protect } = require('../middleware/auth');
 const { restrictTo } = require('../middleware/role');
 const upload = require('../middleware/upload');
+const AppError = require('../utils/AppError');
+
+// Allows lab_partner accounts AND admin accounts with lab_admin sub-role
+function restrictToLabAccess(req, res, next) {
+  if (req.user?.role === 'lab_partner') return next();
+  if (req.user?.role === 'admin' && req.user?.adminRole === 'lab_admin') return next();
+  return next(new AppError('Access denied.', 403));
+}
 
 router.post('/labs/onboard', ctrl.onboardLab);
 router.get('/lab-tests', ctrl.listLabTests);
@@ -10,14 +18,16 @@ router.get('/lab-tests', ctrl.listLabTests);
 router.use(protect);
 
 router.get('/labs', ctrl.listLabs);
-router.get('/labs/profile', restrictTo('lab_partner'), ctrl.getLabProfile);
-router.put('/labs/profile', restrictTo('lab_partner'), ctrl.updateLabProfile);
-router.put('/labs/tests', restrictTo('lab_partner'), ctrl.updateLabTests);
-router.get('/labs/requests', restrictTo('lab_partner'), ctrl.getLabRequests);
-router.post('/labs/requests/:id/claim', restrictTo('lab_partner'), ctrl.claimRequest);
-router.get('/labs/earnings', restrictTo('lab_partner'), ctrl.getLabEarnings);
-router.post('/labs/earnings/request-payout', restrictTo('lab_partner'), ctrl.requestLabPayout);
-router.put('/labs/requests/:id/status', restrictTo('lab_partner'), ctrl.updateLabRequestStatus);
+router.get('/labs/profile', restrictToLabAccess, ctrl.getLabProfile);
+router.put('/labs/profile', restrictToLabAccess, ctrl.updateLabProfile);
+router.put('/labs/tests', restrictToLabAccess, ctrl.updateLabTests);
+router.get('/labs/requests', restrictToLabAccess, ctrl.getLabRequests);
+router.post('/labs/requests/:id/claim', restrictToLabAccess, ctrl.claimRequest);
+router.get('/labs/earnings', restrictToLabAccess, ctrl.getLabEarnings);
+router.post('/labs/earnings/request-payout', restrictToLabAccess, ctrl.requestLabPayout);
+router.put('/labs/requests/:id/status', restrictToLabAccess, ctrl.updateLabRequestStatus);
+router.get('/labs/test-catalog', restrictToLabAccess, ctrl.getLabTestCatalog);
+router.post('/labs/walk-in', restrictToLabAccess, ctrl.createLabWalkIn);
 
 router.post('/doctor-order', restrictTo('doctor'), ctrl.requestTestsForPatient)
 router.post('/request', upload.single('referral'), ctrl.requestTests);

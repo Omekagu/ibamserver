@@ -67,6 +67,22 @@ async function dispatchEmail(type, user, d) {
       });
       break;
 
+    case 'appointment_rescheduled':
+      await sendAppointmentBookedPatientEmail({
+        patientEmail: email, patientName: name,
+        doctorName: d.doctorName || 'Doctor',
+        type: d.appointmentType || 'consultation',
+        scheduledAt: d.newScheduledAt || d.scheduledAt || new Date(),
+      });
+      sendAdminAlertEmail({
+        subject: 'Doctor rescheduled an appointment',
+        headline: 'Appointment Rescheduled by Doctor',
+        body: `Dr. ${d.doctorName || 'A doctor'} rescheduled an appointment to ${new Date(d.newScheduledAt || d.scheduledAt).toDateString()}.${d.reason ? ` Reason: ${d.reason}` : ''}`,
+        ctaLabel: 'View Appointments',
+        ctaUrl: `${APP_URL}/admin/appointments`,
+      }).catch(() => {});
+      break;
+
     case 'appointment_cancelled':
       await sendAppointmentCancelledEmail({
         email, name,

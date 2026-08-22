@@ -701,6 +701,14 @@ exports.updateTriageQuestions = asyncHandler(async (req, res) => {
 
 // â”€â”€â”€ Live monitoring â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.getLiveConsultations = asyncHandler(async (req, res) => {
+  // Auto-close sessions stuck as active for over 4 hours — covers cases where
+  // the doctor closed the app without ending and the socket timer was missed.
+  const staleAt = new Date(Date.now() - 4 * 60 * 60 * 1000)
+  await Consultation.updateMany(
+    { status: 'active', startedAt: { $lt: staleAt } },
+    { $set: { status: 'ended', endedAt: new Date(), timedOut: true } }
+  )
+
   const consultations = await Consultation.find({ status: 'active' })
     .populate({
       path: 'appointment',
@@ -1527,7 +1535,7 @@ exports.impersonateLab = asyncHandler(async (req, res, next) => {
     impersonatedBy: req.user._id
   })
 
-  const clientUrl = process.env.CLIENT_URL || 'http://10.0.1.44:3000'
+  const clientUrl = process.env.CLIENT_URL || 'https://www.ibamhealth.com'
   sendSuccess(res, 200, 'Impersonation token generated.', {
     token,
     labName: lab.name,
@@ -2003,4 +2011,250 @@ exports.deleteLabTest = asyncHandler(async (req, res, next) => {
   const labTest = await LabTest.findByIdAndDelete(req.params.id)
   if (!labTest) return next(new AppError('Lab test not found.', 404))
   sendSuccess(res, 200, 'Lab test deleted.')
+})
+
+// ── Walk-in lab registration (receptionist creates request on behalf of patient) ──
+exports.createWalkInLabRequest = asyncHandler(async (req, res, next) => {
+  const {
+    patientName,
+    patientPhone,
+    patientEmail,
+    tests,
+    paymentMethod,
+    totalAmount,
+    notes
+  } = req.body
+
+  if (!patientName?.trim() || !patientPhone?.trim()) {
+    return next(new AppError('Patient name and phone are required.', 400))
+  }
+  if (!Array.isArray(tests) || !tests.length) {
+    return next(new AppError('At least one test must be selected.', 400))
+  }
+
+  // Find existing patient by phone or email
+  const orConditions = []
+  if (patientPhone) orConditions.push({ phone: patientPhone.trim() })
+  if (patientEmail)
+    orConditions.push({ email: patientEmail.toLowerCase().trim() })
+
+  let patient = orConditions.length
+    ? await User.findOne({ $or: orConditions, role: 'patient' })
+    : null
+
+  // Create guest patient account if not found
+  if (!patient) {
+    const guestEmail = patientEmail?.trim()
+      ? patientEmail.toLowerCase().trim()
+      : `walkin_${Date.now()}_${patientPhone
+          .replace(/\D/g, '')
+          .slice(-8)}@ibamhealth.guest`
+    patient = await User.create({
+      name: patientName.trim(),
+      email: guestEmail,
+      phone: patientPhone.trim(),
+      password: crypto.randomBytes(16).toString('hex'),
+      role: 'patient',
+      isVerified: false
+    })
+  }
+
+  const request = await DiagnosticsRequest.create({
+    patient: patient._id,
+    tests,
+    collectionType: 'walk_in',
+    notes: notes?.trim() || undefined,
+    totalAmount: Number(totalAmount) || 0,
+    requiresApproval: false,
+    adminApprovalStatus: 'na',
+    walkInExpiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000)
+  })
+
+  // Record payment immediately for cash / POS / transfer
+  const validMethods = ['walk_in_cash', 'pos', 'direct_transfer']
+  if (
+    paymentMethod &&
+    validMethods.includes(paymentMethod) &&
+    Number(totalAmount) > 0
+  ) {
+    const reference = `ibam_wk_${crypto
+      .randomUUID()
+      .replace(/-/g, '')
+      .slice(0, 12)}`
+    const payment = await Payment.create({
+      user: patient._id,
+      type: 'lab_test',
+      serviceRef: request._id,
+      serviceModel: 'DiagnosticsRequest',
+      amount: Number(totalAmount),
+      method: paymentMethod,
+      reference,
+      status: 'success'
+    })
+    request.paymentRef = payment._id
+    await request.save()
+  }
+
+  const bookingRef = `#${request._id.toString().slice(-8).toUpperCase()}`
+
+  sendSuccess(res, 201, 'Walk-in lab request created.', {
+    request,
+    patient: { name: patient.name, phone: patient.phone, email: patient.email },
+    bookingRef
+  })
+})
+
+// ── Lab account creation for existing lab ──────────────────────────────────
+exports.createLabAccount = asyncHandler(async (req, res, next) => {
+  const lab = await LabPartner.findById(req.params.id)
+  if (!lab) return next(new AppError('Lab not found.', 404))
+  if (lab.user)
+    return next(
+      new AppError('This lab already has a user account linked.', 409)
+    )
+
+  const { name, email, phone, password } = req.body
+  if (!name || !email || !password)
+    return next(new AppError('name, email and password are required.', 400))
+
+  const existing = await User.findOne({ email: email.toLowerCase() })
+  if (existing)
+    return next(new AppError('A user with that email already exists.', 409))
+
+  const user = await User.create({
+    name,
+    email,
+    phone: phone || undefined,
+    password,
+    role: 'lab_partner',
+    isVerified: true,
+    isActive: true,
+    kycStatus: 'approved'
+  })
+
+  lab.user = user._id
+  if (!lab.email) lab.email = email
+  await lab.save()
+
+  await createNotification({
+    userId: user._id,
+    type: 'partner_approved',
+    title: 'Lab Account Created',
+    message: `Your account for ${lab.name} has been set up by an admin. You can now log in on the mobile app.`
+  })
+
+  sendAccountCreatedEmail({ email, name, password, role: 'lab_partner' }).catch(
+    err => console.error('[Email] Lab assignee account:', err.message)
+  )
+
+  const populated = await LabPartner.findById(lab._id).populate(
+    'user',
+    'name email isActive'
+  )
+  sendSuccess(res, 201, 'Lab account created.', { user, lab: populated })
+})
+
+// ── Admin user management ───────────────────────────────────────────────────
+exports.getAdminUsers = asyncHandler(async (req, res) => {
+  const admins = await User.find({ role: 'admin' })
+    .select('name email adminRole isActive createdAt')
+    .sort({ createdAt: -1 })
+  sendSuccess(res, 200, 'Admin users retrieved.', { admins })
+})
+
+exports.createAdminUser = asyncHandler(async (req, res, next) => {
+  const {
+    name,
+    email,
+    password,
+    adminRole = 'support_admin',
+    managedLabId
+  } = req.body
+  if (!name || !email || !password)
+    return next(new AppError('name, email and password are required.', 400))
+  if (adminRole === 'lab_admin' && !managedLabId)
+    return next(
+      new AppError('managedLabId is required for lab_admin accounts.', 400)
+    )
+
+  const existing = await User.findOne({ email: email.toLowerCase() })
+  if (existing)
+    return next(new AppError('A user with that email already exists.', 409))
+
+  const user = await User.create({
+    name,
+    email,
+    password,
+    role: 'admin',
+    adminRole,
+    isVerified: true,
+    isActive: true,
+    ...(managedLabId ? { managedLabId } : {})
+  })
+
+  sendSuccess(res, 201, 'Admin user created.', {
+    user: {
+      _id: user._id,
+      name: user.name,
+      email: user.email,
+      adminRole: user.adminRole,
+      isActive: user.isActive,
+      managedLabId: user.managedLabId
+    }
+  })
+})
+
+exports.updateAdminRole = asyncHandler(async (req, res, next) => {
+  const { adminRole } = req.body
+  const VALID = [
+    'super_admin',
+    'lab_admin',
+    'finance_admin',
+    'support_admin',
+    'ops_admin'
+  ]
+  if (!VALID.includes(adminRole))
+    return next(new AppError('Invalid adminRole.', 400))
+
+  const user = await User.findOneAndUpdate(
+    { _id: req.params.id, role: 'admin' },
+    { adminRole },
+    { new: true, select: 'name email adminRole isActive' }
+  )
+  if (!user) return next(new AppError('Admin user not found.', 404))
+
+  // Prevent demoting yourself
+  if (
+    req.user._id.toString() === user._id.toString() &&
+    adminRole !== 'super_admin'
+  ) {
+    return next(new AppError('You cannot change your own role.', 403))
+  }
+
+  sendSuccess(res, 200, 'Admin role updated.', { user })
+})
+
+exports.toggleAdminUser = asyncHandler(async (req, res, next) => {
+  const target = await User.findOne({ _id: req.params.id, role: 'admin' })
+  if (!target) return next(new AppError('Admin user not found.', 404))
+  if (req.user._id.toString() === target._id.toString()) {
+    return next(new AppError('You cannot deactivate your own account.', 403))
+  }
+
+  target.isActive = !target.isActive
+  await target.save()
+  sendSuccess(
+    res,
+    200,
+    `Admin ${target.isActive ? 'activated' : 'deactivated'}.`,
+    {
+      user: {
+        _id: target._id,
+        name: target.name,
+        email: target.email,
+        adminRole: target.adminRole,
+        isActive: target.isActive
+      }
+    }
+  )
 })

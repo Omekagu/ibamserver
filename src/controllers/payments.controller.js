@@ -95,11 +95,15 @@ exports.initiate = asyncHandler(async (req, res, next) => {
     }
   })
 
+  const settings = await PlatformSettings.findOne().select('paystackPublicKey').lean()
+  const paystackPublicKey = settings?.paystackPublicKey || process.env.PAYSTACK_PUBLIC_KEY || ''
+
   sendSuccess(res, 200, 'Payment initialised.', {
     paymentId: payment._id,
     reference,
     authorizationUrl: paystackData.authorization_url,
-    accessCode: paystackData.access_code
+    accessCode: paystackData.access_code,
+    paystackPublicKey
   })
 })
 

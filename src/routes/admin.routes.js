@@ -3,6 +3,7 @@ const ctrl = require('../controllers/admin.controller');
 const { protect } = require('../middleware/auth');
 const { restrictTo } = require('../middleware/role');
 const { audit } = require('../middleware/audit');
+const { requirePermission } = require('../middleware/adminPermission');
 
 // ─── Public endpoints (no auth) ────────────────────────────────
 router.get('/public/content', ctrl.getPublicContent);
@@ -39,14 +40,16 @@ router.post('/pharmacy', audit('create_pharmacy', 'PharmacyPartner'), ctrl.creat
 router.put('/pharmacy/:id/status', audit('update_pharmacy_status', 'PharmacyPartner'), ctrl.updatePharmacyStatus);
 
 // Lab management
-router.get('/labs', ctrl.getLabs);
-router.post('/labs', audit('create_lab', 'LabPartner'), ctrl.createLab);
-router.post('/labs/:id/impersonate', audit('impersonate_lab', 'LabPartner'), ctrl.impersonateLab);
-router.put('/labs/:id/status', audit('update_lab_status', 'LabPartner'), ctrl.updateLabStatus);
-router.put('/labs/:id/tests', audit('update_lab_tests', 'LabPartner'), ctrl.updateLabTests);
+router.get('/labs', requirePermission('labs'), ctrl.getLabs);
+router.post('/labs', requirePermission('labs'), audit('create_lab', 'LabPartner'), ctrl.createLab);
+router.post('/labs/:id/impersonate', requirePermission('labs'), audit('impersonate_lab', 'LabPartner'), ctrl.impersonateLab);
+router.put('/labs/:id/status', requirePermission('labs'), audit('update_lab_status', 'LabPartner'), ctrl.updateLabStatus);
+router.put('/labs/:id/tests', requirePermission('labs'), audit('update_lab_tests', 'LabPartner'), ctrl.updateLabTests);
+router.post('/labs/:id/create-account', requirePermission('labs'), audit('create_lab_account', 'LabPartner'), ctrl.createLabAccount);
 
 // Diagnostics management
 router.get('/diagnostics', ctrl.getDiagnosticsRequests);
+router.post('/diagnostics/walk-in', audit('create_walkin_lab', 'DiagnosticsRequest'), ctrl.createWalkInLabRequest);
 
 // All orders & lab requests
 router.get('/orders', ctrl.getAllOrders);
@@ -94,5 +97,11 @@ router.delete('/lab-tests/:id', audit('delete_lab_test', 'LabTest'), ctrl.delete
 
 // Broadcast
 router.post('/broadcast', audit('broadcast_message', 'User'), ctrl.broadcastMessage);
+
+// Admin user management — super_admin only
+router.get('/admin-users', ctrl.getAdminUsers);
+router.post('/admin-users', audit('create_admin_user', 'User'), ctrl.createAdminUser);
+router.put('/admin-users/:id/role', audit('update_admin_role', 'User'), ctrl.updateAdminRole);
+router.put('/admin-users/:id/toggle', audit('toggle_admin_user', 'User'), ctrl.toggleAdminUser);
 
 module.exports = router;

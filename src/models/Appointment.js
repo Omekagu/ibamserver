@@ -21,6 +21,10 @@ const appointmentSchema = new mongoose.Schema(
     notes: { type: String },
     isUrgent: { type: Boolean, default: false },
     sessionDurationMinutes: { type: Number, default: 30 },
+    // Doctor-initiated reschedule tracking
+    rescheduleReason: { type: String },
+    rescheduledAt:    { type: Date },
+    rescheduleCount:  { type: Number, default: 0 },
   },
   { timestamps: true }
 );

@@ -8,7 +8,7 @@ const notificationSchema = new mongoose.Schema(
       enum: [
         // Appointments
         'appointment_booked', 'appointment_booked_patient', 'appointment_confirmed',
-        'appointment_cancelled', 'appointment_reminder', 'follow_up_scheduled',
+        'appointment_cancelled', 'appointment_rescheduled', 'appointment_reminder', 'follow_up_scheduled',
         // Consultations
         'consultation_started', 'consultation_ended',
         // Prescriptions & medications

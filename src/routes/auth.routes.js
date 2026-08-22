@@ -2,6 +2,7 @@ const router = require('express').Router();
 const { body } = require('express-validator');
 const rateLimit = require('express-rate-limit');
 const ctrl = require('../controllers/auth.controller');
+const usersCtrl = require('../controllers/users.controller');
 const { protect } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
 
@@ -107,6 +108,8 @@ router.post('/verify-email-otp',
 router.post('/refresh-token', refreshLimiter, ctrl.refreshToken);
 router.post('/forgot-password', forgotPasswordLimiter, ctrl.forgotPassword);
 router.patch('/reset-password/:token', ctrl.resetPassword);
+router.get('/me', protect, usersCtrl.getProfile);
+router.patch('/me', protect, usersCtrl.updateProfile);
 router.post('/logout', protect, ctrl.logout);
 router.post('/push-token', protect, ctrl.registerPushToken);
 router.delete('/push-token', protect, ctrl.clearPushToken);

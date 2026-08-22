@@ -2,7 +2,7 @@ const Appointment = require('../models/Appointment');
 const Availability = require('../models/Availability');
 const Doctor = require('../models/Doctor');
 const User = require('../models/User');
-const { createNotification } = require('../services/notification.service');
+const { createNotification, notifyAdmins } = require('../services/notification.service');
 const { sendSuccess } = require('../utils/response');
 const AppError = require('../utils/AppError');
 const asyncHandler = require('../utils/asyncHandler');
@@ -235,6 +235,57 @@ exports.scheduleFollowUp = asyncHandler(async (req, res, next) => {
   });
 
   sendSuccess(res, 201, 'Follow-up appointment scheduled.', { followUp });
+});
+
+exports.doctorReschedule = asyncHandler(async (req, res, next) => {
+  const { scheduledAt, reason } = req.body;
+  if (!scheduledAt) return next(new AppError('New scheduled time is required.', 400));
+  if (new Date(scheduledAt) <= new Date()) return next(new AppError('Cannot reschedule to a past time.', 400));
+
+  const appointment = await Appointment.findById(req.params.id);
+  if (!appointment) return next(new AppError('Appointment not found.', 404));
+  if (appointment.doctor.toString() !== req.user._id.toString()) {
+    return next(new AppError('Only the assigned doctor can reschedule this appointment.', 403));
+  }
+  if (['completed', 'cancelled'].includes(appointment.status)) {
+    return next(new AppError(`Cannot reschedule a ${appointment.status} appointment.`, 400));
+  }
+
+  const oldScheduledAt = appointment.scheduledAt;
+  appointment.scheduledAt    = new Date(scheduledAt);
+  appointment.rescheduleReason = reason?.trim() || '';
+  appointment.rescheduledAt  = new Date();
+  appointment.rescheduleCount = (appointment.rescheduleCount || 0) + 1;
+  await appointment.save();
+
+  const patientUser = await User.findById(appointment.patient).select('name').lean();
+  const newDateStr  = new Date(scheduledAt).toDateString();
+
+  // Notify patient (in-app + push + email)
+  createNotification({
+    userId: appointment.patient,
+    type: 'appointment_rescheduled',
+    title: 'Appointment Rescheduled',
+    message: `Dr. ${req.user.name} has rescheduled your appointment to ${newDateStr}.${reason ? ` Reason: ${reason}` : ''}`,
+    metadata: { appointmentId: appointment._id, oldScheduledAt, newScheduledAt: scheduledAt, reason },
+    emailData: {
+      doctorName:      req.user.name,
+      oldScheduledAt,
+      newScheduledAt:  new Date(scheduledAt),
+      reason,
+      appointmentType: appointment.type,
+    },
+  }).catch(() => {});
+
+  // Notify admins
+  notifyAdmins({
+    type: 'appointment_rescheduled',
+    title: 'Appointment Rescheduled by Doctor',
+    message: `Dr. ${req.user.name} rescheduled an appointment with ${patientUser?.name || 'a patient'} to ${newDateStr}.${reason ? ` Reason: ${reason}` : ''}`,
+    metadata: { appointmentId: appointment._id },
+  }).catch(() => {});
+
+  sendSuccess(res, 200, 'Appointment rescheduled.', { appointment });
 });
 
 exports.getFollowUps = asyncHandler(async (req, res) => {

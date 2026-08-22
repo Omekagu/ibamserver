@@ -26,6 +26,14 @@ const userSchema = new mongoose.Schema(
     refreshToken: { type: String, select: false },
     passwordResetToken: { type: String, select: false },
     passwordResetExpires: { type: Date, select: false },
+    // Only meaningful when role === 'admin'. Controls which sections this admin can access.
+    adminRole: {
+      type: String,
+      enum: ['super_admin', 'lab_admin', 'finance_admin', 'support_admin', 'ops_admin'],
+      default: 'super_admin',
+    },
+    // Only set when role='admin' and adminRole='lab_admin' — links to their managed lab
+    managedLabId: { type: mongoose.Schema.Types.ObjectId, ref: 'LabPartner', default: null },
     expoPushToken: { type: String, default: null },
     loginAttemptCount: { type: Number, default: 0, select: false },
     loginLockedUntil:  { type: Date,   default: null, select: false },

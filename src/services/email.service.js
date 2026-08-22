@@ -615,6 +615,29 @@ const sendAccountCreatedEmail = ({ email, name, password, role }) => {
   });
 };
 
+// ─── New lab request alert (→ all super/lab admins) ──
+const sendNewLabRequestAdminEmail = ({ emails, patientName, tests = [], collectionType, requestId }) => {
+  if (!emails?.length) return Promise.resolve();
+  const typeLabel = collectionType === 'home_visit' ? 'Home Visit' : 'Walk-In';
+  return sendEmail({
+    to: emails,
+    subject: `New Lab Test Request — ${patientName}`,
+    html: base(`
+      ${h2('New Lab Test Request 🔬')}
+      ${pill('New Request', '#3B82F6')}
+      ${para(`A patient has submitted a new lab test request and it is awaiting assignment.`)}
+      <div style="margin:20px 0;border:1px solid #E5E7EB;border-radius:12px;overflow:hidden">
+        ${info('Patient', patientName)}
+        ${info('Collection Type', typeLabel)}
+        ${info('Tests', tests.slice(0, 3).join(', ') + (tests.length > 3 ? ` +${tests.length - 3} more` : ''))}
+        ${info('Submitted', new Date().toLocaleString('en-NG', { dateStyle: 'medium', timeStyle: 'short' }))}
+      </div>
+      ${btn(`${APP_URL}/admin/labs`, 'View in Admin Panel')}
+    `),
+    text: `New lab test request from ${patientName}. Tests: ${tests.join(', ')}. Collection: ${typeLabel}.`,
+  });
+};
+
 // ─── Admin alert ─────────────────────────────────
 const sendAdminAlertEmail = ({ subject: sub, headline, body: bodyText, ctaLabel, ctaUrl }) => {
   const adminEmail = process.env.ADMIN_EMAIL;
@@ -671,6 +694,7 @@ const sendAppointmentReminderEmail = ({ email, name, doctorName, patientName, ty
 
 module.exports = {
   sendEmail,
+  sendNewLabRequestAdminEmail,
   sendOTPEmail,
   sendWelcomeEmail,
   sendPasswordResetEmail,

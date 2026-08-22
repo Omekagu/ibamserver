@@ -14,10 +14,24 @@ const {
   createNotification,
   notifyAdmins
 } = require('../services/notification.service')
-const { sendAdminAlertEmail } = require('../services/email.service')
+const {
+  sendAdminAlertEmail,
+  sendNewLabRequestAdminEmail
+} = require('../services/email.service')
 const { sendSuccess } = require('../utils/response')
 const AppError = require('../utils/AppError')
 const asyncHandler = require('../utils/asyncHandler')
+
+async function getLabForUser (user) {
+  if (user.role === 'lab_partner') return LabPartner.findOne({ user: user._id })
+  if (
+    user.role === 'admin' &&
+    user.adminRole === 'lab_admin' &&
+    user.managedLabId
+  )
+    return LabPartner.findById(user.managedLabId)
+  return null
+}
 
 exports.listLabTests = asyncHandler(async (req, res) => {
   const tests = await LabTest.find({ isActive: true })
@@ -77,7 +91,7 @@ exports.onboardLab = asyncHandler(async (req, res, next) => {
     body: `${name} (${email}) has applied to join as a laboratory partner and is awaiting approval.`,
     ctaLabel: 'Review Partners',
     ctaUrl: `${
-      process.env.CLIENT_URL || 'http://10.0.1.44:3000'
+      process.env.CLIENT_URL || 'https://www.ibamhealth.com'
     }/admin/partners`
   }).catch(err => console.error('[Email] Admin lab alert failed:', err.message))
 
@@ -97,25 +111,25 @@ exports.onboardLab = asyncHandler(async (req, res, next) => {
 })
 
 exports.getLabProfile = asyncHandler(async (req, res, next) => {
-  const lab = await LabPartner.findOne({ user: req.user._id })
+  const lab = await getLabForUser(req.user)
   if (!lab) return next(new AppError('Lab partner record not found.', 404))
   sendSuccess(res, 200, 'Lab profile retrieved.', { lab })
 })
 
 exports.updateLabProfile = asyncHandler(async (req, res, next) => {
   const { name, address, phone } = req.body
-  // bankAccount is intentionally excluded  use POST /api/kyc/verify-bank instead
+  // bankAccount is intentionally excluded — use POST /api/kyc/verify-bank instead
   const update = {}
   if (name) update.name = name
   if (address) update.address = address
   if (phone) update.phone = phone
 
-  const lab = await LabPartner.findOneAndUpdate(
-    { user: req.user._id },
-    update,
-    { returnDocument: 'after', runValidators: true }
-  )
-  if (!lab) return next(new AppError('Lab partner record not found.', 404))
+  const existing = await getLabForUser(req.user)
+  if (!existing) return next(new AppError('Lab partner record not found.', 404))
+  const lab = await LabPartner.findByIdAndUpdate(existing._id, update, {
+    returnDocument: 'after',
+    runValidators: true
+  })
   sendSuccess(res, 200, 'Lab profile updated.', { lab })
 })
 
@@ -124,13 +138,112 @@ exports.updateLabTests = asyncHandler(async (req, res, next) => {
   if (!Array.isArray(testsOffered))
     return next(new AppError('testsOffered must be an array.', 400))
 
-  const lab = await LabPartner.findOneAndUpdate(
-    { user: req.user._id },
+  const existing = await getLabForUser(req.user)
+  if (!existing) return next(new AppError('Lab partner record not found.', 404))
+  const lab = await LabPartner.findByIdAndUpdate(
+    existing._id,
     { testsOffered },
     { returnDocument: 'after', runValidators: true }
   )
-  if (!lab) return next(new AppError('Lab partner record not found.', 404))
   sendSuccess(res, 200, 'Tests updated.', { lab })
+})
+
+// Full test catalog with pricing (lab portal walk-in registration)
+exports.getLabTestCatalog = asyncHandler(async (req, res) => {
+  const tests = await LabTest.find({ isActive: true })
+    .sort({ order: 1, name: 1 })
+    .lean()
+  sendSuccess(res, 200, 'Lab test catalog retrieved.', { tests })
+})
+
+// Lab creates a walk-in request on behalf of a patient (receptionist flow)
+exports.createLabWalkIn = asyncHandler(async (req, res, next) => {
+  const lab = await getLabForUser(req.user)
+  if (!lab) return next(new AppError('Lab profile not found.', 404))
+
+  const {
+    patientName,
+    patientPhone,
+    patientEmail,
+    tests,
+    paymentMethod,
+    totalAmount,
+    notes
+  } = req.body
+
+  if (!patientName?.trim() || !patientPhone?.trim()) {
+    return next(new AppError('Patient name and phone are required.', 400))
+  }
+  if (!Array.isArray(tests) || !tests.length) {
+    return next(new AppError('At least one test must be selected.', 400))
+  }
+
+  // Find or create guest patient
+  const orConditions = []
+  if (patientPhone) orConditions.push({ phone: patientPhone.trim() })
+  if (patientEmail)
+    orConditions.push({ email: patientEmail.toLowerCase().trim() })
+
+  let patient = orConditions.length
+    ? await User.findOne({ $or: orConditions, role: 'patient' })
+    : null
+
+  if (!patient) {
+    const guestEmail = patientEmail?.trim()
+      ? patientEmail.toLowerCase().trim()
+      : `walkin_${Date.now()}_${patientPhone
+          .replace(/\D/g, '')
+          .slice(-8)}@ibamhealth.guest`
+    patient = await User.create({
+      name: patientName.trim(),
+      email: guestEmail,
+      phone: patientPhone.trim(),
+      password: randomUUID().replace(/-/g, ''),
+      role: 'patient',
+      isVerified: false
+    })
+  }
+
+  // Create request pre-assigned to this lab
+  const request = await DiagnosticsRequest.create({
+    patient: patient._id,
+    lab: lab._id,
+    tests,
+    collectionType: 'walk_in',
+    notes: notes?.trim() || undefined,
+    totalAmount: Number(totalAmount) || 0,
+    requiresApproval: false,
+    adminApprovalStatus: 'na',
+    status: 'assigned',
+    walkInExpiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000)
+  })
+
+  const validMethods = ['walk_in_cash', 'pos', 'direct_transfer']
+  if (
+    paymentMethod &&
+    validMethods.includes(paymentMethod) &&
+    Number(totalAmount) > 0
+  ) {
+    const reference = `ibam_wk_${randomUUID().replace(/-/g, '').slice(0, 12)}`
+    const payment = await Payment.create({
+      user: patient._id,
+      type: 'lab_test',
+      serviceRef: request._id,
+      serviceModel: 'DiagnosticsRequest',
+      amount: Number(totalAmount),
+      method: paymentMethod,
+      reference,
+      status: 'success'
+    })
+    request.paymentRef = payment._id
+    await request.save()
+  }
+
+  sendSuccess(res, 201, 'Walk-in request created.', {
+    request,
+    patient: { name: patient.name, phone: patient.phone, email: patient.email },
+    bookingRef: `#${request._id.toString().slice(-8).toUpperCase()}`
+  })
 })
 
 exports.requestTests = asyncHandler(async (req, res, next) => {
@@ -211,6 +324,28 @@ exports.requestTests = asyncHandler(async (req, res, next) => {
   }
 
   // Lab partners are notified AFTER payment is confirmed (in payments.controller.js verify handler).
+
+  // Notify all super_admins and lab_admins via email (fire-and-forget)
+  User.find({
+    role: 'admin',
+    adminRole: { $in: ['super_admin', 'lab_admin'] },
+    isActive: true
+  })
+    .select('email')
+    .lean()
+    .then(admins => {
+      const emails = admins.map(a => a.email).filter(Boolean)
+      if (!emails.length) return
+      sendNewLabRequestAdminEmail({
+        emails,
+        patientName: req.user.name,
+        tests,
+        collectionType,
+        requestId: request._id
+      })
+    })
+    .catch(() => {})
+
   sendSuccess(res, 201, 'Diagnostics request submitted.', { request })
 })
 
@@ -268,7 +403,7 @@ exports.listLabs = asyncHandler(async (req, res) => {
 })
 
 exports.getLabRequests = asyncHandler(async (req, res) => {
-  const lab = await LabPartner.findOne({ user: req.user._id })
+  const lab = await getLabForUser(req.user)
   if (!lab)
     return sendSuccess(res, 200, 'No requests.', { available: [], mine: [] })
 
@@ -295,7 +430,7 @@ exports.getLabRequests = asyncHandler(async (req, res) => {
 
 // Lab claims an unassigned pending request
 exports.claimRequest = asyncHandler(async (req, res, next) => {
-  const lab = await LabPartner.findOne({ user: req.user._id })
+  const lab = await getLabForUser(req.user)
   if (!lab) return next(new AppError('Lab partner record not found.', 404))
 
   const request = await DiagnosticsRequest.findOne({
@@ -357,7 +492,9 @@ exports.uploadResult = asyncHandler(async (req, res, next) => {
 
   const pdfBuffer = await toPdf(req.file.buffer, req.file.mimetype)
   const result_file = await uploadBuffer(pdfBuffer, 'lab_results', 'raw', {
-    format: 'pdf'
+    format: 'pdf',
+    type: 'upload',
+    access_mode: 'public'
   })
   const result = await LabResult.create({
     request: req.params.id,
@@ -520,7 +657,7 @@ exports.markSampleCollected = asyncHandler(async (req, res, next) => {
 
 exports.updateLabRequestStatus = asyncHandler(async (req, res, next) => {
   const { status, resultNotes, paymentMethod, transferReference } = req.body
-  const lab = await LabPartner.findOne({ user: req.user._id })
+  const lab = await getLabForUser(req.user)
   if (!lab) return next(new AppError('Lab partner record not found.', 404))
 
   const request = await DiagnosticsRequest.findOne({
@@ -644,7 +781,7 @@ exports.requestLabPayout = asyncHandler(async (req, res, next) => {
   if (!pending.length)
     return next(new AppError('No pending earnings to pay out.', 400))
 
-  const lab = await LabPartner.findOne({ user: req.user._id }).lean()
+  const lab = await getLabForUser(req.user)
   const bankAccount = lab?.bankAccount || {}
   const ids = pending.map(e => e._id)
   const totalGross =
