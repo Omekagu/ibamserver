@@ -28,6 +28,7 @@ const paymentSchema = new mongoose.Schema(
     adminNotes:         { type: String },
     refundRequested:    { type: Boolean, default: false },
     refundReason:       { type: String },
+    subaccountCode:     { type: String },
   },
   { timestamps: true }
 );

@@ -53,6 +53,7 @@ const doctorSchema = new mongoose.Schema(
       verified:      { type: Boolean, default: false },
       verifiedAt:    { type: Date },
     },
+    subaccountCode: { type: String, default: null },
     displayName: { type: String },
     socialLinks: {
       twitter:  { type: String },

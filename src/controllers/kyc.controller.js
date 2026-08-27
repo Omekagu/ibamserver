@@ -4,7 +4,7 @@ const PharmacyPartner = require('../models/PharmacyPartner')
 const LabPartner = require('../models/LabPartner')
 const crypto = require('crypto')
 const { lookupNIN, faceMatch, lookupCAC } = require('../services/dojah.service')
-const { resolveAccount } = require('../services/paystack.service')
+const { resolveAccount, createSubaccount } = require('../services/paystack.service')
 const { sendOTPEmail } = require('../services/email.service')
 const {
   createNotification,
@@ -487,13 +487,19 @@ exports.confirmBankAccount = asyncHandler(async (req, res, next) => {
       verifiedAt: new Date()
     }
   }
-  if (role === 'pharmacy_partner') {
-    await PharmacyPartner.findOneAndUpdate({ user: req.user._id }, bankData)
-  } else if (role === 'lab_partner') {
-    await LabPartner.findOneAndUpdate({ user: req.user._id }, bankData)
-  } else {
-    await Doctor.findOneAndUpdate({ user: req.user._id }, bankData)
-  }
+  const Model = role === 'pharmacy_partner' ? PharmacyPartner : role === 'lab_partner' ? LabPartner : Doctor
+  await Model.findOneAndUpdate({ user: req.user._id }, bankData)
+
+  // Create Paystack subaccount so future payments split automatically (fire-and-forget)
+  createSubaccount({
+    businessName: pending.accountName,
+    bankCode: pending.bankCode,
+    accountNumber: pending.accountNumber,
+    percentageCharge: 10, // iBam Health retains 10%; provider settles 90%
+    description: `${req.user.name} — iBam Health ${role.replace('_', ' ')}`,
+  })
+    .then(sub => Model.findOneAndUpdate({ user: req.user._id }, { subaccountCode: sub.subaccount_code }))
+    .catch(err => console.error('[Paystack] Subaccount creation failed:', err.message))
 
   // Clear pending state
   await User.findByIdAndUpdate(req.user._id, {
