@@ -1,6 +1,6 @@
 # iBam Health — All User Journeys
 
-> Platform URL: **https://www.ibamhealth.com**  
+> Platform URL: **http://10.0.1.12:3000**  
 > API: **https://api.ibamhealth.com**  
 > Mobile APK: sideload or Play Store once published  
 > Six roles: **Patient · Doctor · Pharmacy Partner · Lab · Field Agent · Admin**
@@ -24,7 +24,7 @@
 
 ### 1.1 Registration & Onboarding
 
-1. Visit **https://www.ibamhealth.com** (web) or open the mobile app.
+1. Visit **http://10.0.1.12:3000** (web) or open the mobile app.
 2. Tap **Get Started** → **Sign Up**.
 3. Fill in name, email address, phone number, and password. Select role **Patient**.
 4. Submit → receive a 6-digit OTP via email (and SMS if Termii is configured).
@@ -204,7 +204,7 @@ View all transactions with date, amount, status, and reference number.
 
 **Web (recommended for initial setup):**
 
-1. Go to **https://www.ibamhealth.com/signup**.
+1. Go to **http://10.0.1.12:3000/signup**.
 2. Fill in name, email, phone, password. Select role **Doctor**.
 3. Verify email via OTP.
 4. Log in → redirected to the **Doctor Portal** (`/doctor`).
@@ -334,7 +334,7 @@ Same flow — after sign-up with doctor role, the app routes to `/(doctor)` layo
 ### 3.1 Onboarding (Web)
 
 1. A **Pharmacy Partner** account is created by the Admin, **or** the partner self-registers:
-   - Go to **https://www.ibamhealth.com/signup** → role: **Pharmacy Partner**.
+   - Go to **http://10.0.1.12:3000/signup** → role: **Pharmacy Partner**.
    - Fill in name, email, phone, password.
    - Verify email via OTP.
 2. Log in → redirected to **Partner Portal** at `/partner/pharmacy`.
@@ -395,7 +395,7 @@ Pending → Processing → Ready → Dispatched → Delivered
 
 ### 4.1 Onboarding (Web)
 
-1. Register at **https://www.ibamhealth.com/signup** → role \*_Lab _, or created by Admin.
+1. Register at **http://10.0.1.12:3000/signup** → role \*_Lab _, or created by Admin.
 2. Verify email via OTP.
 3. Complete lab profile: lab name, address, contact, coverage area, accreditation details.
 4. Submit for Admin approval.
@@ -518,7 +518,7 @@ Field agents are created by the **Lab** or the **Admin**:
 
 ### 6.1 Access
 
-1. Navigate to **https://www.ibamhealth.com/admin** (web only — no mobile admin panel).
+1. Navigate to **http://10.0.1.12:3000/admin** (web only — no mobile admin panel).
 2. Log in with admin credentials (`ADMIN_EMAIL` / `ADMIN_PASSWORD` from `.env`).
 3. Role is `admin` → redirected to `/admin` dashboard.
 

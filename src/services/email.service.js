@@ -592,9 +592,22 @@ const sendHomeVisitScheduledEmail = ({ email, name, scheduledAt }) =>
   });
 
 // ─── Account created by admin ─────────────────────
-const sendAccountCreatedEmail = ({ email, name, password, role }) => {
-  const roleLabels = { doctor: 'Doctor', lab_partner: 'Diagnostic Lab', pharmacy_partner: 'Pharmacy Partner' };
-  const portals = { doctor: `${APP_URL}/doctor`, lab_partner: `${APP_URL}/lab`, pharmacy_partner: `${APP_URL}/pharmacy` };
+const sendAccountCreatedEmail = ({ email, name, password, role, adminRole }) => {
+  const adminRoleLabel = adminRole
+    ? adminRole.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+    : 'Admin';
+  const roleLabels = {
+    doctor: 'Doctor',
+    lab_partner: 'Diagnostic Lab',
+    pharmacy_partner: 'Pharmacy Partner',
+    admin: adminRoleLabel,
+  };
+  const portals = {
+    doctor: `${APP_URL}/doctor`,
+    lab_partner: `${APP_URL}/lab`,
+    pharmacy_partner: `${APP_URL}/pharmacy`,
+    admin: `${APP_URL}/login`,
+  };
   const label = roleLabels[role] || 'Partner';
   const portal = portals[role] || APP_URL;
   return sendEmail({
@@ -608,6 +621,7 @@ const sendAccountCreatedEmail = ({ email, name, password, role }) => {
         ${info('Email', email)}
         ${info('Temporary Password', password)}
       </div>
+      ${role === 'admin' ? para('Each login requires an email OTP for security. Check your inbox when you sign in.') : ''}
       ${para('<strong>Important:</strong> Please log in and change your password immediately.')}
       ${btn(portal, 'Access Your Account')}
     `),
@@ -692,9 +706,50 @@ const sendAppointmentReminderEmail = ({ email, name, doctorName, patientName, ty
     text: `Reminder: Your appointment is ${windowLabel}. Doctor: ${doctorName} | Time: ${new Date(scheduledAt).toLocaleString()}`,
   });
 
+// ─── Walk-in patient notification ─────────────────────
+// isNew=true  → account just created; include temp password + setup steps
+// isNew=false → existing patient; just notify them a test was registered
+const sendWalkInPatientEmail = ({ email, name, labName, tests = [], tempPassword, isNew }) =>
+  sendEmail({
+    to: email,
+    subject: isNew
+      ? `Your iBam Health account & lab test — ${labName}`
+      : `Lab test registered for you at ${labName} — iBam Health`,
+    html: base(`
+      ${h2(isNew ? `Welcome to iBam Health, ${name}!` : `Lab Test Registered, ${name}`)}
+      ${pill(isNew ? 'New Account' : 'Lab Notification', '#3B82F6')}
+      ${para(`<strong>${labName}</strong> has registered a lab test on your behalf.`)}
+      ${tests.length ? `
+        <div style="background:#F8FAFC;border-radius:10px;padding:16px 20px;margin:16px 0">
+          <p style="margin:0 0 8px;font-size:12px;font-weight:700;color:#9CA3AF;text-transform:uppercase;letter-spacing:0.06em">Tests registered</p>
+          <ul style="margin:0;padding-left:18px;color:#0D1B2A;font-size:14px;line-height:1.8">
+            ${tests.map(t => `<li>${t}</li>`).join('')}
+          </ul>
+        </div>` : ''}
+      ${isNew ? `
+        ${para('An iBam Health account has been created for you so you can track your results online.')}
+        <div style="margin:20px 0;border:1px solid #E5E7EB;border-radius:12px;overflow:hidden">
+          ${info('Email', email)}
+          ${info('Temporary Password', tempPassword)}
+        </div>
+        ${numberedList([
+          'Click the button below to log in with the temporary password above.',
+          'Verify your email address when prompted.',
+          'Go to <strong>Settings → Change Password</strong> to set a permanent password.',
+          'Visit <strong>My Lab Tests</strong> to view and track your results.',
+        ])}
+      ` : para('Log in to your iBam Health dashboard to view and track your test results.')}
+      ${btn(`${APP_URL}/login`, isNew ? 'Set Up Your Account' : 'Track My Test')}
+    `),
+    text: isNew
+      ? `Hi ${name}, ${labName} registered a lab test for you. Login: ${email} / Temp password: ${tempPassword}. Please log in and change your password.`
+      : `Hi ${name}, ${labName} registered a lab test for you. Log in to track your results: ${APP_URL}/login`,
+  });
+
 module.exports = {
   sendEmail,
   sendNewLabRequestAdminEmail,
+  sendWalkInPatientEmail,
   sendOTPEmail,
   sendWelcomeEmail,
   sendPasswordResetEmail,

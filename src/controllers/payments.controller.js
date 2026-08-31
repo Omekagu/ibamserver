@@ -1,4 +1,4 @@
-﻿const { randomUUID } = require('crypto')
+const { randomUUID } = require('crypto')
 const Payment = require('../models/Payment')
 const Appointment = require('../models/Appointment')
 const Availability = require('../models/Availability')
@@ -51,7 +51,7 @@ async function tryAutoPartnerPayout (earning) {
     await initiateTransfer({
       amount: earning.netAmount,
       recipient: recipient.recipient_code,
-      reason: `iBam Health payout â€“ ${
+      reason: `iBam Health payout â€" ${
         earning.partnerName || earning.partnerType
       }`
     })
@@ -67,38 +67,38 @@ async function tryAutoPartnerPayout (earning) {
 exports.initiate = asyncHandler(async (req, res, next) => {
   const { type, serviceId, referenceId, amount, batchRefs } = req.body
   if (!type || !amount)
-    return next(new AppError(‘type and amount required.’, 400))
+    return next(new AppError('type and amount required.', 400))
 
-  // Normalise: ‘appointment_booking’ → ‘consultation’; referenceId is alias for serviceId
-  const paymentType = type === ‘appointment_booking’ ? ‘consultation’ : type
+  // Normalise: 'appointment_booking' → 'consultation'; referenceId is alias for serviceId
+  const paymentType = type === 'appointment_booking' ? 'consultation' : type
   const effectiveRefId = serviceId || referenceId
 
-  // Resolve provider’s Paystack subaccount for automatic split at transaction time.
+  // Resolve provider's Paystack subaccount for automatic split at transaction time.
   // Lab tests are excluded — the lab is assigned after payment, so splitting happens
   // via manual transfer in the verify handler once a lab claims the request.
   let subaccount = null
-  if (paymentType === ‘consultation’ && effectiveRefId) {
-    const appt = await Appointment.findById(effectiveRefId).select(‘doctor’).lean()
+  if (paymentType === 'consultation' && effectiveRefId) {
+    const appt = await Appointment.findById(effectiveRefId).select('doctor').lean()
     if (appt?.doctor) {
-      const doc = await Doctor.findOne({ user: appt.doctor }).select(‘subaccountCode’).lean()
+      const doc = await Doctor.findOne({ user: appt.doctor }).select('subaccountCode').lean()
         .catch(() => null)
-      // Doctor model’s user field may differ — try findById if user lookup failed
-      || await Doctor.findById(appt.doctor).select(‘subaccountCode’).lean().catch(() => null)
+      // Doctor model's user field may differ — try findById if user lookup failed
+      || await Doctor.findById(appt.doctor).select('subaccountCode').lean().catch(() => null)
       subaccount = doc?.subaccountCode || null
     }
-  } else if (paymentType === ‘pharmacy’ && effectiveRefId) {
-    const order = await PharmacyOrder.findById(effectiveRefId).select(‘pharmacy’).populate(‘pharmacy’, ‘subaccountCode’).lean()
+  } else if (paymentType === 'pharmacy' && effectiveRefId) {
+    const order = await PharmacyOrder.findById(effectiveRefId).select('pharmacy').populate('pharmacy', 'subaccountCode').lean()
     subaccount = order?.pharmacy?.subaccountCode || null
   }
 
-  const reference = `ibam_${randomUUID().replace(/-/g, ‘’).slice(0, 16)}`
+  const reference = `ibam_${randomUUID().replace(/-/g, '').slice(0, 16)}`
 
   const payment = await Payment.create({
     user: req.user._id,
     amount: amount * 100,
     reference,
     type: paymentType,
-    method: ‘paystack’,
+    method: 'paystack',
     serviceRef: effectiveRefId,
     batchRefs: Array.isArray(batchRefs) ? batchRefs : [],
     subaccountCode: subaccount || undefined,
@@ -109,7 +109,7 @@ exports.initiate = asyncHandler(async (req, res, next) => {
     amount,
     reference,
     metadata: { type: paymentType, serviceId: effectiveRefId, userId: req.user._id },
-    ...(subaccount ? { subaccount, bearer: ‘account’ } : {}),
+    ...(subaccount ? { subaccount, bearer: 'account' } : {}),
   })
 
   const settings = await PlatformSettings.findOne().select('paystackPublicKey').lean()
@@ -279,7 +279,7 @@ exports.verify = asyncHandler(async (req, res, next) => {
       }
     }
 
-    // â”€â”€ Multi-pharmacy batch: one payment, one PartnerEarning per store â”€â”€â”€â”€â”€â”€â”€
+    // â"€â"€ Multi-pharmacy batch: one payment, one PartnerEarning per store â"€â"€â"€â"€â"€â"€â"€
     if (payment.type === 'pharmacy_batch' && payment.batchRefs?.length) {
       const orders = await PharmacyOrder.find({
         _id: { $in: payment.batchRefs }
@@ -548,7 +548,7 @@ exports.requestRefund = asyncHandler(async (req, res, next) => {
   sendSuccess(
     res,
     200,
-    'Refund request submitted. Our team will review within 24â€“48 hours.',
+    'Refund request submitted. Our team will review within 24â€"48 hours.',
     {}
   )
 })

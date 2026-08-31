@@ -105,6 +105,15 @@ router.post('/verify-email-otp',
   validate, ctrl.verifyEmailOTP
 );
 
+router.post('/verify-admin-otp',
+  otpVerifyLimiter,
+  [
+    body('adminUserId').notEmpty().withMessage('adminUserId required'),
+    body('otp').isLength({ min: 6, max: 6 }).withMessage('OTP must be 6 digits'),
+  ],
+  validate, ctrl.verifyAdminLoginOtp
+);
+
 router.post('/refresh-token', refreshLimiter, ctrl.refreshToken);
 router.post('/forgot-password', forgotPasswordLimiter, ctrl.forgotPassword);
 router.patch('/reset-password/:token', ctrl.resetPassword);

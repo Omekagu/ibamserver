@@ -6,4 +6,8 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
+const cfg = cloudinary.config();
+console.log('[Cloudinary] cloud_name:', cfg.cloud_name || 'NOT SET');
+console.log('[Cloudinary] api_key:', cfg.api_key ? cfg.api_key.toString().slice(0, 6) + '...' : 'NOT SET');
+
 module.exports = cloudinary;

@@ -134,6 +134,35 @@ exports.login = asyncHandler(async (req, res, next) => {
   if (!user.isActive) return next(new AppError('Account deactivated. Contact support.', 403));
   if (!user.isVerified) return next(new AppError('Please verify your email before logging in.', 403));
 
+  // Admin accounts require a one-time OTP before tokens are issued
+  if (user.role === 'admin') {
+    const otp = generateOTP();
+    storeOTP(`admin_login:${user._id}`, otp);
+    sendOTPEmail(user.email, otp).catch(() => {});
+    return sendSuccess(res, 200, 'OTP sent to your admin email.', {
+      requiresAdminOtp: true,
+      adminUserId: user._id.toString(),
+    });
+  }
+
+  const tokens = issueTokens(user);
+  user.refreshToken = tokens.refreshToken;
+  await user.save({ validateBeforeSave: false });
+
+  sendSuccess(res, 200, 'Login successful.', { user, ...tokens });
+});
+
+exports.verifyAdminLoginOtp = asyncHandler(async (req, res, next) => {
+  const { adminUserId, otp } = req.body;
+  if (!adminUserId || !otp) return next(new AppError('adminUserId and otp are required.', 400));
+
+  const user = await User.findById(adminUserId);
+  if (!user || user.role !== 'admin') return next(new AppError('Invalid request.', 400));
+  if (!user.isActive) return next(new AppError('Account deactivated. Contact support.', 403));
+
+  const valid = verifyOTP(`admin_login:${adminUserId}`, otp);
+  if (!valid) return next(new AppError('Invalid or expired OTP. Please log in again to receive a new code.', 400));
+
   const tokens = issueTokens(user);
   user.refreshToken = tokens.refreshToken;
   await user.save({ validateBeforeSave: false });

@@ -57,9 +57,7 @@ exports.uploadLicense = asyncHandler(async (req, res, next) => {
     headline: 'New Licence Document',
     body: `Dr. ${req.user.name} (${req.user.email}) has uploaded their licence document and is awaiting KYC approval.`,
     ctaLabel: 'Review Doctor',
-    ctaUrl: `${
-      process.env.CLIENT_URL || 'https://www.ibamhealth.com'
-    }/admin/doctors`
+    ctaUrl: `${process.env.CLIENT_URL || 'http://10.0.1.12:3000'}/admin/doctors`
   }).catch(err =>
     console.error('[Email] Admin licence alert failed:', err.message)
   )

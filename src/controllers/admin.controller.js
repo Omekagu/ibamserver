@@ -1,4 +1,4 @@
-﻿const User = require('../models/User')
+const User = require('../models/User')
 const Doctor = require('../models/Doctor')
 const Specialization = require('../models/Specialization')
 const PlatformService = require('../models/PlatformService')
@@ -69,6 +69,23 @@ async function tryAutoPartnerPayout (earning, partnerType) {
 const { sendSuccess } = require('../utils/response')
 const AppError = require('../utils/AppError')
 const asyncHandler = require('../utils/asyncHandler')
+
+// Write an audit record silently — never throws.
+function logAction (adminUser, action, targetModel, targetId, details, req) {
+  AuditLog.create({
+    admin: adminUser._id,
+    action,
+    targetModel: targetModel || undefined,
+    targetId: targetId || undefined,
+    details: details || undefined,
+    ipAddress:
+      req?.ip ||
+      (Array.isArray(req?.headers?.['x-forwarded-for'])
+        ? req.headers['x-forwarded-for'][0]
+        : req?.headers?.['x-forwarded-for']) ||
+      undefined
+  }).catch(() => {})
+}
 
 exports.getDashboard = asyncHandler(async (req, res) => {
   const [
@@ -202,6 +219,14 @@ exports.approveDoctor = asyncHandler(async (req, res, next) => {
     }
   }
 
+  logAction(
+    req.user,
+    isApproved ? 'Approved doctor' : 'Rejected doctor',
+    'Doctor',
+    doctor._id,
+    { isApproved },
+    req
+  )
   sendSuccess(res, 200, isApproved ? 'Doctor approved.' : 'Doctor rejected.', {
     doctor
   })
@@ -383,6 +408,14 @@ exports.confirmPayment = asyncHandler(async (req, res, next) => {
     }
   })
 
+  logAction(
+    req.user,
+    'Confirmed manual payment',
+    'Payment',
+    payment._id,
+    { type: payment.type, amount: payment.amount, adminNotes },
+    req
+  )
   sendSuccess(res, 200, 'Payment confirmed.', { payment })
 })
 
@@ -803,6 +836,14 @@ exports.updatePharmacyStatus = asyncHandler(async (req, res, next) => {
     }
   }
 
+  logAction(
+    req.user,
+    `Updated pharmacy status to ${status}`,
+    'PharmacyPartner',
+    pharmacy._id,
+    { status },
+    req
+  )
   sendSuccess(res, 200, 'Pharmacy status updated.', { pharmacy })
 })
 
@@ -878,6 +919,14 @@ exports.updateLabStatus = asyncHandler(async (req, res, next) => {
     }
   }
 
+  logAction(
+    req.user,
+    `Updated lab status to ${status}`,
+    'LabPartner',
+    lab._id,
+    { status },
+    req
+  )
   sendSuccess(res, 200, 'Lab status updated.', { lab })
 })
 
@@ -1535,7 +1584,7 @@ exports.impersonateLab = asyncHandler(async (req, res, next) => {
     impersonatedBy: req.user._id
   })
 
-  const clientUrl = process.env.CLIENT_URL || 'https://www.ibamhealth.com'
+  const clientUrl = process.env.CLIENT_URL || 'http://10.0.1.12:3000'
   sendSuccess(res, 200, 'Impersonation token generated.', {
     token,
     labName: lab.name,
@@ -1751,6 +1800,14 @@ exports.manualKycVerify = asyncHandler(async (req, res, next) => {
         : undefined
   })
 
+  logAction(
+    req.user,
+    `KYC status set to ${kycStatus}`,
+    'User',
+    user._id,
+    { kycStatus, reason: reason || null },
+    req
+  )
   sendSuccess(res, 200, 'KYC status updated.', { user })
 })
 
@@ -2192,6 +2249,23 @@ exports.createAdminUser = asyncHandler(async (req, res, next) => {
     ...(managedLabId ? { managedLabId } : {})
   })
 
+  // Welcome email with login credentials
+  sendAccountCreatedEmail({
+    email,
+    name,
+    password,
+    role: 'admin',
+    adminRole
+  }).catch(err => console.error('[Email] Admin account created:', err.message))
+  logAction(
+    req.user,
+    `Created admin: ${adminRole}`,
+    'User',
+    user._id,
+    { adminRole, managedLabId: managedLabId || null },
+    req
+  )
+
   sendSuccess(res, 201, 'Admin user created.', {
     user: {
       _id: user._id,
@@ -2231,6 +2305,14 @@ exports.updateAdminRole = asyncHandler(async (req, res, next) => {
     return next(new AppError('You cannot change your own role.', 403))
   }
 
+  logAction(
+    req.user,
+    'Updated admin role',
+    'User',
+    user._id,
+    { adminRole },
+    req
+  )
   sendSuccess(res, 200, 'Admin role updated.', { user })
 })
 
@@ -2243,6 +2325,14 @@ exports.toggleAdminUser = asyncHandler(async (req, res, next) => {
 
   target.isActive = !target.isActive
   await target.save()
+  logAction(
+    req.user,
+    target.isActive ? 'Activated admin account' : 'Deactivated admin account',
+    'User',
+    target._id,
+    { targetEmail: target.email, adminRole: target.adminRole },
+    req
+  )
   sendSuccess(
     res,
     200,
