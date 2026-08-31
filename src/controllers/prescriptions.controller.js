@@ -70,7 +70,18 @@ exports.forwardToPharmacy = asyncHandler(async (req, res, next) => {
 
 exports.getByConsultation = asyncHandler(async (req, res, next) => {
   const { cid } = req.params;
-  const prescriptions = await Prescription.find({ consultation: cid })
+  const { role, _id } = req.user;
+
+  const authFilter = {};
+  if (role === 'doctor') {
+    authFilter.doctor = _id;
+  } else if (role === 'patient') {
+    authFilter.patient = _id;
+  } else if (role !== 'admin') {
+    return next(new AppError('Forbidden.', 403));
+  }
+
+  const prescriptions = await Prescription.find({ consultation: cid, ...authFilter })
     .populate('doctor', 'name')
     .sort({ createdAt: 1 })
     .lean();

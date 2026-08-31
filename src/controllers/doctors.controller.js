@@ -11,7 +11,7 @@ const asyncHandler = require('../utils/asyncHandler')
 exports.listDoctors = asyncHandler(async (req, res) => {
   const { specialization, page = 1, limit = 20 } = req.query
   const filter = { isApproved: true }
-  if (specialization) filter.specialization = new RegExp(specialization, 'i')
+  if (specialization) filter.specialization = new RegExp(specialization.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')
 
   const doctors = await Doctor.find(filter)
     .populate('user', 'name avatar')

@@ -237,10 +237,11 @@ exports.getUsers = asyncHandler(async (req, res) => {
   const filter = {}
   if (role && role !== 'all') filter.role = role
   if (search) {
+    const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     filter.$or = [
-      { name: new RegExp(search, 'i') },
-      { email: new RegExp(search, 'i') },
-      { phone: new RegExp(search, 'i') }
+      { name: new RegExp(escaped, 'i') },
+      { email: new RegExp(escaped, 'i') },
+      { phone: new RegExp(escaped, 'i') }
     ]
   }
   const users = await User.find(filter)
@@ -1042,7 +1043,7 @@ exports.getAllOrders = asyncHandler(async (req, res) => {
 exports.getAuditLogs = asyncHandler(async (req, res) => {
   const { action, adminId, page = 1, limit = 30 } = req.query
   const filter = {}
-  if (action) filter.action = new RegExp(action, 'i')
+  if (action) filter.action = new RegExp(action.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')
   if (adminId) filter.admin = adminId
 
   const logs = await AuditLog.find(filter)

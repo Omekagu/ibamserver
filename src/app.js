@@ -30,6 +30,16 @@ const adminRoutes = require('./routes/admin.routes')
 const reviewsRoutes = require('./routes/reviews.routes')
 const kycRoutes = require('./routes/kyc.routes')
 
+// Fail fast on weak secrets
+if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
+  console.error('[FATAL] JWT_SECRET must be at least 32 characters. Exiting.')
+  process.exit(1)
+}
+if (!process.env.PAYSTACK_SECRET_KEY) {
+  console.error('[FATAL] PAYSTACK_SECRET_KEY is not set. Exiting.')
+  process.exit(1)
+}
+
 const app = express()
 
 // Trust the first proxy hop (nginx, hosting platform, etc.)

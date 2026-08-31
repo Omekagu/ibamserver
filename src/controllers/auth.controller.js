@@ -240,6 +240,9 @@ exports.refreshToken = asyncHandler(async (req, res, next) => {
   if (!user || user.refreshToken !== refreshToken) {
     return next(new AppError('Invalid refresh token.', 401));
   }
+  if (!user.isActive) {
+    return next(new AppError('Account deactivated.', 403));
+  }
 
   const tokens = issueTokens(user);
   user.refreshToken = tokens.refreshToken;
@@ -335,8 +338,12 @@ exports.googleCallback = asyncHandler(async (req, res) => {
   try {
     const parsed = JSON.parse(Buffer.from(state, 'base64').toString());
     platform = parsed.platform || 'web';
-    if (parsed.redirectUrl && parsed.redirectUrl.startsWith(process.env.CLIENT_URL)) {
-      redirectUrl = parsed.redirectUrl;
+    if (parsed.redirectUrl) {
+      try {
+        const dest = new URL(parsed.redirectUrl);
+        const allowed = new URL(process.env.CLIENT_URL);
+        if (dest.origin === allowed.origin) redirectUrl = parsed.redirectUrl;
+      } catch { /* invalid URL — keep default */ }
     }
   } catch { /* use defaults */ }
 

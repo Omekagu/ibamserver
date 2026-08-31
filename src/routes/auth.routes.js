@@ -48,6 +48,14 @@ const forgotPasswordLimiter = rateLimit({
   message: { status: 'fail', message: 'Too many password reset requests. Please wait an hour.' },
 });
 
+const resetPasswordLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { status: 'fail', message: 'Too many password reset attempts. Please wait an hour.' },
+});
+
 const refreshLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 30,
@@ -116,7 +124,7 @@ router.post('/verify-admin-otp',
 
 router.post('/refresh-token', refreshLimiter, ctrl.refreshToken);
 router.post('/forgot-password', forgotPasswordLimiter, ctrl.forgotPassword);
-router.patch('/reset-password/:token', ctrl.resetPassword);
+router.patch('/reset-password/:token', resetPasswordLimiter, ctrl.resetPassword);
 router.get('/me', protect, usersCtrl.getProfile);
 router.patch('/me', protect, usersCtrl.updateProfile);
 router.post('/logout', protect, ctrl.logout);

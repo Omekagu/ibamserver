@@ -1,4 +1,4 @@
-const { randomUUID } = require('crypto')
+const { randomUUID, createHmac } = require('crypto')
 const Payment = require('../models/Payment')
 const Appointment = require('../models/Appointment')
 const Availability = require('../models/Availability')
@@ -68,6 +68,9 @@ exports.initiate = asyncHandler(async (req, res, next) => {
   const { type, serviceId, referenceId, amount, batchRefs } = req.body
   if (!type || !amount)
     return next(new AppError('type and amount required.', 400))
+  const numAmount = Number(amount)
+  if (!Number.isInteger(numAmount) || numAmount < 100 || numAmount > 100_000_000_00)
+    return next(new AppError('Invalid payment amount.', 400))
 
   // Normalise: 'appointment_booking' → 'consultation'; referenceId is alias for serviceId
   const paymentType = type === 'appointment_booking' ? 'consultation' : type
@@ -496,8 +499,14 @@ exports.verify = asyncHandler(async (req, res, next) => {
 })
 
 exports.webhook = asyncHandler(async (req, res) => {
-  // Paystack sends the event type and data
-  const event = req.body
+  const signature = req.headers['x-paystack-signature']
+  const secret = process.env.PAYSTACK_SECRET_KEY
+  if (!secret || !signature) return res.sendStatus(401)
+
+  const hash = createHmac('sha512', secret).update(req.body).digest('hex')
+  if (hash !== signature) return res.sendStatus(401)
+
+  const event = JSON.parse(req.body)
   if (event.event === 'charge.success') {
     const { reference } = event.data
     const payment = await Payment.findOne({ reference })
