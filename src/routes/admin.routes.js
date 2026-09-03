@@ -95,6 +95,12 @@ router.post('/lab-tests', audit('create_lab_test', 'LabTest'), ctrl.createLabTes
 router.put('/lab-tests/:id', audit('update_lab_test', 'LabTest'), ctrl.updateLabTest);
 router.delete('/lab-tests/:id', audit('delete_lab_test', 'LabTest'), ctrl.deleteLabTest);
 
+// Wellness package catalog
+router.get('/wellness-packages', ctrl.listAllWellnessPackages);
+router.post('/wellness-packages', audit('create_wellness_package', 'WellnessPackage'), ctrl.createWellnessPackage);
+router.put('/wellness-packages/:id', audit('update_wellness_package', 'WellnessPackage'), ctrl.updateWellnessPackage);
+router.delete('/wellness-packages/:id', audit('delete_wellness_package', 'WellnessPackage'), ctrl.deleteWellnessPackage);
+
 // Broadcast
 router.post('/broadcast', audit('broadcast_message', 'User'), ctrl.broadcastMessage);
 

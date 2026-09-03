@@ -67,7 +67,7 @@ exports.onboard = asyncHandler(async (req, res, next) => {
     body: `${name} (${email}) has applied to join as a pharmacy partner and is awaiting approval.`,
     ctaLabel: 'Review Partners',
     ctaUrl: `${
-      process.env.CLIENT_URL || 'http://10.0.1.12:3000'
+      process.env.CLIENT_URL || 'https://www.ibamhealth.com'
     }/admin/partners`
   }).catch(err =>
     console.error('[Email] Admin pharmacy alert failed:', err.message)

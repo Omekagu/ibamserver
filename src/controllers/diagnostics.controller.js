@@ -7,7 +7,7 @@ const Payment = require('../models/Payment')
 const FieldAgent = require('../models/FieldAgent')
 const HomeVisitSchedule = require('../models/HomeVisitSchedule')
 const User = require('../models/User')
-require('../models/WellnessPackage') // ensure model registered for populate
+const WellnessPackage = require('../models/WellnessPackage')
 const { uploadBuffer } = require('../services/cloudinary.service')
 const cloudinary = require('../config/cloudinary')
 const toPdf = require('../utils/toPdf')
@@ -18,7 +18,7 @@ const {
 const {
   sendAdminAlertEmail,
   sendNewLabRequestAdminEmail,
-  sendWalkInPatientEmail,
+  sendWalkInPatientEmail
 } = require('../services/email.service')
 const { sendSuccess } = require('../utils/response')
 const AppError = require('../utils/AppError')
@@ -120,7 +120,7 @@ exports.onboardLab = asyncHandler(async (req, res, next) => {
     body: `${name} (${email}) has applied to join as a laboratory partner and is awaiting approval.`,
     ctaLabel: 'Review Partners',
     ctaUrl: `${
-      process.env.CLIENT_URL || 'http://10.0.1.12:3000'
+      process.env.CLIENT_URL || 'https://www.ibamhealth.com'
     }/admin/partners`
   }).catch(err => console.error('[Email] Admin lab alert failed:', err.message))
 
@@ -185,6 +185,14 @@ exports.getLabTestCatalog = asyncHandler(async (req, res) => {
   sendSuccess(res, 200, 'Lab test catalog retrieved.', { tests })
 })
 
+// Returns active wellness packages (for lab partner walk-in flow)
+exports.getWellnessPackagesForLab = asyncHandler(async (req, res) => {
+  const packages = await WellnessPackage.find({ isActive: true })
+    .sort({ order: 1, name: 1 })
+    .lean()
+  sendSuccess(res, 200, 'Wellness packages retrieved.', packages)
+})
+
 // Lab creates a walk-in request on behalf of a patient (receptionist flow)
 exports.createLabWalkIn = asyncHandler(async (req, res, next) => {
   const lab = await getLabForUser(req.user)
@@ -194,16 +202,29 @@ exports.createLabWalkIn = asyncHandler(async (req, res, next) => {
     patientName,
     patientPhone,
     patientEmail,
-    tests,
+    tests: rawTests,
     paymentMethod,
-    totalAmount,
+    totalAmount: rawTotal,
     notes,
-    confirmExisting,  // true when staff explicitly confirmed reuse of existing account
+    confirmExisting,
+    wellnessPackageId
   } = req.body
 
   if (!patientName?.trim() || !patientPhone?.trim()) {
     return next(new AppError('Patient name and phone are required.', 400))
   }
+
+  let tests = rawTests
+  let totalAmount = rawTotal
+  let wellnessPkg = null
+  if (wellnessPackageId) {
+    wellnessPkg = await WellnessPackage.findById(wellnessPackageId)
+    if (!wellnessPkg || !wellnessPkg.isActive)
+      return next(new AppError('Wellness package not found.', 404))
+    tests = wellnessPkg.includedTests
+    totalAmount = wellnessPkg.walkInPrice
+  }
+
   if (!Array.isArray(tests) || !tests.length) {
     return next(new AppError('At least one test must be selected.', 400))
   }
@@ -212,7 +233,8 @@ exports.createLabWalkIn = asyncHandler(async (req, res, next) => {
   // the email could belong to a doctor/admin who is also a walk-in patient)
   const orConditions = []
   if (patientPhone) orConditions.push({ phone: patientPhone.trim() })
-  if (patientEmail) orConditions.push({ email: patientEmail.toLowerCase().trim() })
+  if (patientEmail)
+    orConditions.push({ email: patientEmail.toLowerCase().trim() })
 
   let patient = orConditions.length
     ? await User.findOne({ $or: orConditions })
@@ -220,10 +242,16 @@ exports.createLabWalkIn = asyncHandler(async (req, res, next) => {
 
   // If any account exists but staff hasn't confirmed yet, ask for confirmation
   if (patient && !confirmExisting) {
-    const safeEmail = patient.email?.includes('@ibamhealth.guest') ? null : patient.email
+    const safeEmail = patient.email?.includes('@ibamhealth.guest')
+      ? null
+      : patient.email
     return sendSuccess(res, 200, 'Patient already exists.', {
       requiresConfirmation: true,
-      existingPatient: { name: patient.name, email: safeEmail, phone: patient.phone },
+      existingPatient: {
+        name: patient.name,
+        email: safeEmail,
+        phone: patient.phone
+      }
     })
   }
 
@@ -235,7 +263,9 @@ exports.createLabWalkIn = asyncHandler(async (req, res, next) => {
     const hasRealEmail = !!patientEmail?.trim()
     const guestEmail = hasRealEmail
       ? patientEmail.toLowerCase().trim()
-      : `walkin_${Date.now()}_${patientPhone.replace(/\D/g, '').slice(-8)}@ibamhealth.guest`
+      : `walkin_${Date.now()}_${patientPhone
+          .replace(/\D/g, '')
+          .slice(-8)}@ibamhealth.guest`
 
     tempPassword = `Ibam@${Math.floor(100000 + Math.random() * 900000)}`
 
@@ -246,14 +276,15 @@ exports.createLabWalkIn = asyncHandler(async (req, res, next) => {
         phone: patientPhone.trim(),
         password: tempPassword,
         role: 'patient',
-        isVerified: false,
+        isVerified: false
       })
     } catch (createErr) {
       // E11000 means email or phone is taken by a user we didn't find with our query
       // (e.g. a guest email collision). Re-query without role filter and treat as existing.
       if (createErr.code === 11000) {
         patient = await User.findOne({ $or: orConditions })
-        if (!patient) return next(new AppError('Account conflict — please try again.', 409))
+        if (!patient)
+          return next(new AppError('Account conflict — please try again.', 409))
         isNewPatient = false
         tempPassword = null
       } else {
@@ -268,17 +299,26 @@ exports.createLabWalkIn = asyncHandler(async (req, res, next) => {
     lab: lab._id,
     tests,
     collectionType: 'walk_in',
-    notes: notes?.trim() || undefined,
+    notes:
+      notes?.trim() ||
+      (wellnessPkg
+        ? `Booked via "${wellnessPkg.name}" wellness package.`
+        : undefined),
     totalAmount: Number(totalAmount) || 0,
     requiresApproval: false,
     adminApprovalStatus: 'na',
     status: 'assigned',
     walkInExpiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000),
+    ...(wellnessPkg ? { wellnessPackage: wellnessPkg._id } : {})
   })
 
   // Record payment if method + amount provided
   const validMethods = ['walk_in_cash', 'pos', 'direct_transfer']
-  if (paymentMethod && validMethods.includes(paymentMethod) && Number(totalAmount) > 0) {
+  if (
+    paymentMethod &&
+    validMethods.includes(paymentMethod) &&
+    Number(totalAmount) > 0
+  ) {
     const reference = `ibam_wk_${randomUUID().replace(/-/g, '').slice(0, 12)}`
     const payment = await Payment.create({
       user: patient._id,
@@ -288,13 +328,14 @@ exports.createLabWalkIn = asyncHandler(async (req, res, next) => {
       amount: Number(totalAmount),
       method: paymentMethod,
       reference,
-      status: 'success',
+      status: 'success'
     })
     request.paymentRef = payment._id
     await request.save()
   }
 
-  const hasRealEmail = patient.email && !patient.email.includes('@ibamhealth.guest')
+  const hasRealEmail =
+    patient.email && !patient.email.includes('@ibamhealth.guest')
 
   // Notify patient — in-app notification (always) + email (if real email exists)
   createNotification({
@@ -304,7 +345,7 @@ exports.createLabWalkIn = asyncHandler(async (req, res, next) => {
     message: isNewPatient
       ? `${lab.name} has registered a lab test on your behalf and created an iBam Health account for you. Please log in to verify your account and track your results.`
       : `${lab.name} has registered a lab test on your behalf. Log in to view and track your results.`,
-    metadata: { requestId: request._id },
+    metadata: { requestId: request._id }
   }).catch(() => {})
 
   if (hasRealEmail) {
@@ -314,15 +355,20 @@ exports.createLabWalkIn = asyncHandler(async (req, res, next) => {
       labName: lab.name,
       tests,
       tempPassword: isNewPatient ? tempPassword : undefined,
-      isNew: isNewPatient,
+      isNew: isNewPatient
     }).catch(() => {})
   }
 
   const safeEmail = hasRealEmail ? patient.email : null
   sendSuccess(res, 201, 'Walk-in request created.', {
     request,
-    patient: { name: patient.name, phone: patient.phone, email: safeEmail, isNew: isNewPatient },
-    bookingRef: `#${request._id.toString().slice(-8).toUpperCase()}`,
+    patient: {
+      name: patient.name,
+      phone: patient.phone,
+      email: safeEmail,
+      isNew: isNewPatient
+    },
+    bookingRef: `#${request._id.toString().slice(-8).toUpperCase()}`
   })
 })
 
@@ -494,31 +540,45 @@ exports.getLabRequests = asyncHandler(async (req, res) => {
     paymentRef: { $exists: true }
   })
     .populate('patient', 'name phone email _id')
-    .populate({ path: 'paymentRef', select: 'status amount method reference transferReference' })
+    .populate({
+      path: 'paymentRef',
+      select: 'status amount method reference transferReference'
+    })
     .sort({ createdAt: -1 })
     .lean()
 
   // Mine: requests this lab has claimed / is processing
   const mine = await DiagnosticsRequest.find({ lab: lab._id })
     .populate('patient', 'name phone email _id')
-    .populate({ path: 'paymentRef', select: 'status amount method reference transferReference' })
+    .populate({
+      path: 'paymentRef',
+      select: 'status amount method reference transferReference'
+    })
     .sort({ createdAt: -1 })
     .lean()
 
   // Attach uploaded results so the lab portal can show download links
-  const resultDocs = await LabResult.find({ request: { $in: mine.map(r => r._id) } })
+  const resultDocs = await LabResult.find({
+    request: { $in: mine.map(r => r._id) }
+  })
     .select('request fileUrl notes createdAt')
     .lean()
-  const resultMap = Object.fromEntries(resultDocs.map(r => [r.request.toString(), r]))
+  const resultMap = Object.fromEntries(
+    resultDocs.map(r => [r.request.toString(), r])
+  )
 
   const expiresAt = Math.floor(Date.now() / 1000) + 7200
   const mineWithResults = mine.map(r => {
     const result = resultMap[r._id.toString()] ?? null
-    if (result?.fileUrl) result.signedUrl = signResultUrl(result.fileUrl, expiresAt)
+    if (result?.fileUrl)
+      result.signedUrl = signResultUrl(result.fileUrl, expiresAt)
     return { ...r, result }
   })
 
-  sendSuccess(res, 200, 'Lab requests retrieved.', { available, mine: mineWithResults })
+  sendSuccess(res, 200, 'Lab requests retrieved.', {
+    available,
+    mine: mineWithResults
+  })
 })
 
 // Lab claims an unassigned pending request
@@ -588,9 +648,17 @@ exports.uploadResult = asyncHandler(async (req, res, next) => {
   try {
     result_file = await uploadBuffer(pdfBuffer, 'lab_results', 'auto')
   } catch (uploadErr) {
-    console.error('[uploadResult] Cloudinary error:', uploadErr?.message ?? uploadErr)
-    console.error('[uploadResult] Cloudinary error detail:', JSON.stringify(uploadErr, null, 2))
-    return next(new AppError('Failed to upload result file. Please try again.', 502))
+    console.error(
+      '[uploadResult] Cloudinary error:',
+      uploadErr?.message ?? uploadErr
+    )
+    console.error(
+      '[uploadResult] Cloudinary error detail:',
+      JSON.stringify(uploadErr, null, 2)
+    )
+    return next(
+      new AppError('Failed to upload result file. Please try again.', 502)
+    )
   }
   const result = await LabResult.create({
     request: req.params.id,

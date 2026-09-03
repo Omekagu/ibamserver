@@ -27,6 +27,7 @@ router.get('/labs/earnings', restrictToLabAccess, ctrl.getLabEarnings);
 router.post('/labs/earnings/request-payout', restrictToLabAccess, ctrl.requestLabPayout);
 router.put('/labs/requests/:id/status', restrictToLabAccess, ctrl.updateLabRequestStatus);
 router.get('/labs/test-catalog', restrictToLabAccess, ctrl.getLabTestCatalog);
+router.get('/labs/wellness-packages', restrictToLabAccess, ctrl.getWellnessPackagesForLab);
 router.post('/labs/walk-in', restrictToLabAccess, ctrl.createLabWalkIn);
 
 router.post('/doctor-order', restrictTo('doctor'), ctrl.requestTestsForPatient)

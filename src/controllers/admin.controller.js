@@ -1043,7 +1043,11 @@ exports.getAllOrders = asyncHandler(async (req, res) => {
 exports.getAuditLogs = asyncHandler(async (req, res) => {
   const { action, adminId, page = 1, limit = 30 } = req.query
   const filter = {}
-  if (action) filter.action = new RegExp(action.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')
+  if (action)
+    filter.action = new RegExp(
+      action.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+      'i'
+    )
   if (adminId) filter.admin = adminId
 
   const logs = await AuditLog.find(filter)
@@ -1585,7 +1589,7 @@ exports.impersonateLab = asyncHandler(async (req, res, next) => {
     impersonatedBy: req.user._id
   })
 
-  const clientUrl = process.env.CLIENT_URL || 'http://10.0.1.12:3000'
+  const clientUrl = process.env.CLIENT_URL || 'https://www.ibamhealth.com'
   sendSuccess(res, 200, 'Impersonation token generated.', {
     token,
     labName: lab.name,
@@ -2071,21 +2075,130 @@ exports.deleteLabTest = asyncHandler(async (req, res, next) => {
   sendSuccess(res, 200, 'Lab test deleted.')
 })
 
+// ── Wellness package CRUD ─────────────────────────────────────────────────────
+exports.listAllWellnessPackages = asyncHandler(async (req, res) => {
+  const packages = await WellnessPackage.find().sort({ order: 1, name: 1 })
+  sendSuccess(res, 200, 'Wellness packages retrieved.', { packages })
+})
+
+exports.createWellnessPackage = asyncHandler(async (req, res, next) => {
+  const {
+    name,
+    targetAudience,
+    benefits,
+    includedTests,
+    walkInPrice,
+    homeVisitPrice,
+    gender,
+    order
+  } = req.body
+  if (!name?.trim()) return next(new AppError('Package name is required.', 400))
+  if (walkInPrice == null || homeVisitPrice == null)
+    return next(
+      new AppError('walkInPrice and homeVisitPrice are required.', 400)
+    )
+  const slug = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '')
+  const pkg = await WellnessPackage.create({
+    name: name.trim(),
+    slug,
+    targetAudience,
+    benefits,
+    includedTests: Array.isArray(includedTests)
+      ? includedTests
+      : includedTests
+      ? String(includedTests)
+          .split(',')
+          .map(s => s.trim())
+          .filter(Boolean)
+      : [],
+    walkInPrice: Number(walkInPrice),
+    homeVisitPrice: Number(homeVisitPrice),
+    gender: gender || 'all',
+    order: order ? Number(order) : 0
+  })
+  sendSuccess(res, 201, 'Wellness package created.', { package: pkg })
+})
+
+exports.updateWellnessPackage = asyncHandler(async (req, res, next) => {
+  const {
+    name,
+    targetAudience,
+    benefits,
+    includedTests,
+    walkInPrice,
+    homeVisitPrice,
+    gender,
+    order,
+    isActive
+  } = req.body
+  const update = { targetAudience, benefits, gender, isActive }
+  if (name?.trim()) {
+    update.name = name.trim()
+    update.slug = name
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/(^-|-$)/g, '')
+  }
+  if (includedTests !== undefined) {
+    update.includedTests = Array.isArray(includedTests)
+      ? includedTests
+      : String(includedTests)
+          .split(',')
+          .map(s => s.trim())
+          .filter(Boolean)
+  }
+  if (walkInPrice !== undefined) update.walkInPrice = Number(walkInPrice)
+  if (homeVisitPrice !== undefined)
+    update.homeVisitPrice = Number(homeVisitPrice)
+  if (order !== undefined) update.order = Number(order)
+  const pkg = await WellnessPackage.findByIdAndUpdate(req.params.id, update, {
+    returnDocument: 'after',
+    runValidators: true
+  })
+  if (!pkg) return next(new AppError('Wellness package not found.', 404))
+  sendSuccess(res, 200, 'Wellness package updated.', { package: pkg })
+})
+
+exports.deleteWellnessPackage = asyncHandler(async (req, res, next) => {
+  const pkg = await WellnessPackage.findByIdAndDelete(req.params.id)
+  if (!pkg) return next(new AppError('Wellness package not found.', 404))
+  sendSuccess(res, 200, 'Wellness package deleted.')
+})
+
 // ── Walk-in lab registration (receptionist creates request on behalf of patient) ──
 exports.createWalkInLabRequest = asyncHandler(async (req, res, next) => {
   const {
     patientName,
     patientPhone,
     patientEmail,
-    tests,
+    tests: rawTests,
     paymentMethod,
-    totalAmount,
-    notes
+    totalAmount: rawTotal,
+    notes,
+    wellnessPackageId
   } = req.body
 
   if (!patientName?.trim() || !patientPhone?.trim()) {
     return next(new AppError('Patient name and phone are required.', 400))
   }
+
+  // Resolve tests + amount from wellness package or direct input
+  let tests = rawTests
+  let totalAmount = rawTotal
+  let wellnessPkg = null
+  if (wellnessPackageId) {
+    wellnessPkg = await WellnessPackage.findById(wellnessPackageId)
+    if (!wellnessPkg || !wellnessPkg.isActive)
+      return next(new AppError('Wellness package not found.', 404))
+    tests = wellnessPkg.includedTests
+    totalAmount = wellnessPkg.walkInPrice
+  }
+
   if (!Array.isArray(tests) || !tests.length) {
     return next(new AppError('At least one test must be selected.', 400))
   }
@@ -2121,14 +2234,19 @@ exports.createWalkInLabRequest = asyncHandler(async (req, res, next) => {
     patient: patient._id,
     tests,
     collectionType: 'walk_in',
-    notes: notes?.trim() || undefined,
+    notes:
+      notes?.trim() ||
+      (wellnessPkg
+        ? `Booked via "${wellnessPkg.name}" wellness package.`
+        : undefined),
     totalAmount: Number(totalAmount) || 0,
     requiresApproval: false,
     adminApprovalStatus: 'na',
-    walkInExpiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000)
+    walkInExpiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000),
+    ...(wellnessPkg ? { wellnessPackage: wellnessPkg._id } : {})
   })
 
-  // Record payment immediately for cash / POS / transfer
+  // Record payment immediately for POS / transfer
   const validMethods = ['walk_in_cash', 'pos', 'direct_transfer']
   if (
     paymentMethod &&
