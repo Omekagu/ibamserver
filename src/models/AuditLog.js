@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const auditLogSchema = new mongoose.Schema(
   {
     admin: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    actorRole: { type: String },
     action: { type: String, required: true },
     targetModel: { type: String },
     targetId: { type: mongoose.Schema.Types.ObjectId },
@@ -13,5 +14,6 @@ const auditLogSchema = new mongoose.Schema(
 );
 
 auditLogSchema.index({ admin: 1, createdAt: -1 });
+auditLogSchema.index({ actorRole: 1, createdAt: -1 });
 
 module.exports = mongoose.model('AuditLog', auditLogSchema);

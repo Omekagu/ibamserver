@@ -746,9 +746,36 @@ const sendWalkInPatientEmail = ({ email, name, labName, tests = [], tempPassword
       : `Hi ${name}, ${labName} registered a lab test for you. Log in to track your results: ${APP_URL}/login`,
   });
 
+// ─── Walk-in registration alert (→ all super/lab admins) ──────────────────────
+const sendWalkInAdminEmail = ({ emails, patientName, labName, registeredBy, tests = [], totalAmount, paymentMethod }) => {
+  if (!emails?.length) return Promise.resolve();
+  const methodLabel = { pos: 'POS / Card', direct_transfer: 'Bank Transfer', walk_in_cash: 'Cash' }[paymentMethod] || paymentMethod || 'Recorded';
+  return sendEmail({
+    to: emails,
+    subject: `Walk-In Registered — ${patientName} at ${labName}`,
+    html: base(`
+      ${h2('Walk-In Patient Registered 🏥')}
+      ${pill('Walk-In', '#8B5CF6')}
+      ${para(`A walk-in lab request has been registered by <strong>${registeredBy}</strong> at <strong>${labName}</strong>.`)}
+      <div style="margin:20px 0;border:1px solid #E5E7EB;border-radius:12px;overflow:hidden">
+        ${info('Patient', patientName)}
+        ${info('Lab', labName)}
+        ${info('Tests', tests.slice(0, 3).join(', ') + (tests.length > 3 ? ` +${tests.length - 3} more` : ''))}
+        ${info('Amount', totalAmount > 0 ? `₦${totalAmount.toLocaleString('en-NG')}` : 'Free')}
+        ${info('Payment Method', methodLabel)}
+        ${info('Registered By', registeredBy)}
+        ${info('Time', new Date().toLocaleString('en-NG', { dateStyle: 'medium', timeStyle: 'short' }))}
+      </div>
+      ${btn(`${APP_URL}/admin/labs`, 'View in Admin Panel')}
+    `),
+    text: `Walk-in registered by ${registeredBy} at ${labName} for ${patientName}. Tests: ${tests.join(', ')}. Amount: ₦${totalAmount}.`,
+  });
+};
+
 module.exports = {
   sendEmail,
   sendNewLabRequestAdminEmail,
+  sendWalkInAdminEmail,
   sendWalkInPatientEmail,
   sendOTPEmail,
   sendWelcomeEmail,

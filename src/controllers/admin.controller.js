@@ -29,7 +29,9 @@ const {
   sendBroadcastEmail,
   sendAdminAlertEmail,
   sendAccountCreatedEmail,
-  sendOTPEmail
+  sendOTPEmail,
+  sendWalkInPatientEmail,
+  sendWalkInAdminEmail
 } = require('../services/email.service')
 const {
   createTransferRecipient,
@@ -2272,6 +2274,52 @@ exports.createWalkInLabRequest = asyncHandler(async (req, res, next) => {
   }
 
   const bookingRef = `#${request._id.toString().slice(-8).toUpperCase()}`
+
+  // Notify patient in-app + email (fire-and-forget)
+  createNotification({
+    userId: patient._id,
+    type: 'lab_request_placed',
+    title: 'Lab Test Registered for You',
+    message: `iBam Health has registered a lab test on your behalf. Log in to view and track your results.`,
+    metadata: { requestId: request._id }
+  }).catch(() => {})
+
+  const hasRealEmail = patient.email && !patient.email.includes('@ibamhealth.guest')
+  if (hasRealEmail) {
+    sendWalkInPatientEmail({
+      email: patient.email,
+      name: patient.name,
+      labName: 'iBam Health',
+      tests,
+      isNew: false
+    }).catch(() => {})
+  }
+
+  // Notify other admins so they have visibility (fire-and-forget)
+  notifyAdmins({
+    type: 'lab_walk_in_registered',
+    title: 'Walk-In Registered',
+    message: `${req.user.name || 'Admin'} registered a walk-in for ${patient.name} (${tests.slice(0, 2).join(', ')}${tests.length > 2 ? ` +${tests.length - 2} more` : ''}).`,
+    metadata: { requestId: request._id }
+  }).catch(() => {})
+
+  // Admin email alert to lab_admins
+  User.find({ role: 'admin', adminRole: { $in: ['super_admin', 'lab_admin'] }, isActive: true })
+    .select('email').lean()
+    .then(admins => {
+      const emails = admins.filter(a => String(a._id) !== String(req.user._id)).map(a => a.email).filter(Boolean)
+      if (!emails.length) return
+      sendWalkInAdminEmail({
+        emails,
+        patientName: patient.name,
+        labName: 'iBam Health (Admin)',
+        registeredBy: req.user.name || 'Admin',
+        tests,
+        totalAmount: Number(totalAmount) || 0,
+        paymentMethod
+      })
+    })
+    .catch(() => {})
 
   sendSuccess(res, 201, 'Walk-in lab request created.', {
     request,

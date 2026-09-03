@@ -18,8 +18,10 @@ const {
 const {
   sendAdminAlertEmail,
   sendNewLabRequestAdminEmail,
+  sendWalkInAdminEmail,
   sendWalkInPatientEmail
 } = require('../services/email.service')
+const AuditLog = require('../models/AuditLog')
 const { sendSuccess } = require('../utils/response')
 const AppError = require('../utils/AppError')
 const asyncHandler = require('../utils/asyncHandler')
@@ -359,6 +361,51 @@ exports.createLabWalkIn = asyncHandler(async (req, res, next) => {
     }).catch(() => {})
   }
 
+  // Notify admins — in-app notification + email (fire-and-forget)
+  notifyAdmins({
+    type: 'lab_walk_in_registered',
+    title: 'Walk-In Registered',
+    message: `${req.user.name || 'Lab staff'} at ${lab.name} registered a walk-in for ${patient.name} (${tests.slice(0, 2).join(', ')}${tests.length > 2 ? ` +${tests.length - 2} more` : ''}).`,
+    metadata: { requestId: request._id, labId: lab._id }
+  }).catch(() => {})
+
+  User.find({ role: 'admin', adminRole: { $in: ['super_admin', 'lab_admin'] }, isActive: true })
+    .select('email').lean()
+    .then(admins => {
+      const emails = admins.map(a => a.email).filter(Boolean)
+      if (!emails.length) return
+      sendWalkInAdminEmail({
+        emails,
+        patientName: patient.name,
+        labName: lab.name,
+        registeredBy: req.user.name || 'Lab Staff',
+        tests,
+        totalAmount: Number(totalAmount) || 0,
+        paymentMethod
+      })
+    })
+    .catch(() => {})
+
+  // Audit log — track which lab staff registered the walk-in
+  AuditLog.create({
+    admin: req.user._id,
+    actorRole: req.user.role,
+    action: 'lab_walk_in_registered',
+    targetModel: 'DiagnosticsRequest',
+    targetId: request._id,
+    details: {
+      patientName: patient.name,
+      patientPhone: patient.phone,
+      tests,
+      totalAmount: Number(totalAmount) || 0,
+      paymentMethod,
+      labName: lab.name,
+      isNewPatient,
+      wellnessPackageId: wellnessPkg?._id
+    },
+    ipAddress: req.ip
+  }).catch(() => {})
+
   const safeEmail = hasRealEmail ? patient.email : null
   sendSuccess(res, 201, 'Walk-in request created.', {
     request,
@@ -451,7 +498,14 @@ exports.requestTests = asyncHandler(async (req, res, next) => {
 
   // Lab partners are notified AFTER payment is confirmed (in payments.controller.js verify handler).
 
-  // Notify all super_admins and lab_admins via email (fire-and-forget)
+  // Notify all super_admins and lab_admins — in-app + email (fire-and-forget)
+  notifyAdmins({
+    type: 'lab_request_placed',
+    title: 'New Lab Test Request',
+    message: `${req.user.name || 'A patient'} submitted a ${collectionType === 'home_visit' ? 'home visit' : 'walk-in'} request for ${tests.slice(0, 2).join(', ')}${tests.length > 2 ? ` +${tests.length - 2} more` : ''}.`,
+    metadata: { requestId: request._id }
+  }).catch(() => {})
+
   User.find({
     role: 'admin',
     adminRole: { $in: ['super_admin', 'lab_admin'] },
