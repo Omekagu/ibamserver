@@ -50,6 +50,7 @@ router.post('/labs/:id/create-account', requirePermission('labs'), audit('create
 // Diagnostics management
 router.get('/diagnostics', ctrl.getDiagnosticsRequests);
 router.post('/diagnostics/walk-in', audit('create_walkin_lab', 'DiagnosticsRequest'), ctrl.createWalkInLabRequest);
+router.get('/labs/walk-in-history', ctrl.getLabWalkInHistory);
 
 // All orders & lab requests
 router.get('/orders', ctrl.getAllOrders);

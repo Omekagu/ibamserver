@@ -367,20 +367,7 @@ exports.verify = asyncHandler(async (req, res, next) => {
         { paymentRef: payment._id },
         { returnDocument: 'after' }
       ).populate('lab', 'user name')
-      if (diagReq?.lab?.user) {
-        const gross = payment.amount / 100
-        const cut = Math.round(gross * 0.1 * 100) / 100
-        const earning = await PartnerEarning.create({
-          partner: diagReq.lab.user,
-          partnerType: 'lab',
-          partnerName: diagReq.lab.name,
-          serviceRef: payment.serviceRef,
-          grossAmount: gross,
-          platformCut: cut,
-          netAmount: gross - cut
-        })
-        tryAutoPartnerPayout(earning) // non-blocking
-      }
+      // Platform retains 100% of lab revenue — no PartnerEarning split or auto-payout for lab tests.
       // Patient confirmation  fires here so it only triggers after payment, not at request creation
       if (diagReq) {
         const tests = Array.isArray(diagReq.tests) ? diagReq.tests : []

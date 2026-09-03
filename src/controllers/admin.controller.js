@@ -1042,6 +1042,36 @@ exports.getAllOrders = asyncHandler(async (req, res) => {
 // (re-exported alias  getDiagnosticsRequests already covers this)
 
 // â”€â”€â”€ Audit log â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+exports.getLabWalkInHistory = asyncHandler(async (req, res) => {
+  const { page = 1, limit = 30, search = '' } = req.query
+  const pg = Math.max(1, Number(page))
+  const lim = Math.min(100, Math.max(1, Number(limit)))
+
+  const filter = { collectionType: 'walk_in', registeredBy: { $exists: true } }
+  if (search.trim()) {
+    const q = search.trim()
+    filter.$or = [
+      { 'patientSnapshot.name': new RegExp(q, 'i') },
+    ]
+  }
+
+  const [rows, total] = await Promise.all([
+    DiagnosticsRequest.find(filter)
+      .populate('patient', 'name phone email')
+      .populate('registeredBy', 'name email adminRole role')
+      .populate('lab', 'name')
+      .populate('paymentRef', 'amount method reference status')
+      .populate('wellnessPackage', 'name')
+      .sort({ createdAt: -1 })
+      .skip((pg - 1) * lim)
+      .limit(lim)
+      .lean(),
+    DiagnosticsRequest.countDocuments(filter)
+  ])
+
+  sendSuccess(res, 200, 'Walk-in history retrieved.', { rows, total })
+})
+
 exports.getAuditLogs = asyncHandler(async (req, res) => {
   const { action, adminId, page = 1, limit = 30 } = req.query
   const filter = {}
@@ -2232,6 +2262,8 @@ exports.createWalkInLabRequest = asyncHandler(async (req, res, next) => {
     })
   }
 
+  const amountNaira = Number(totalAmount) || 0
+
   const request = await DiagnosticsRequest.create({
     patient: patient._id,
     tests,
@@ -2241,19 +2273,20 @@ exports.createWalkInLabRequest = asyncHandler(async (req, res, next) => {
       (wellnessPkg
         ? `Booked via "${wellnessPkg.name}" wellness package.`
         : undefined),
-    totalAmount: Number(totalAmount) || 0,
+    totalAmount: amountNaira,
     requiresApproval: false,
     adminApprovalStatus: 'na',
     walkInExpiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000),
+    registeredBy: req.user._id,
     ...(wellnessPkg ? { wellnessPackage: wellnessPkg._id } : {})
   })
 
-  // Record payment immediately for POS / transfer
+  // Record payment immediately for POS / transfer — store in kobo (consistent with Paystack)
   const validMethods = ['walk_in_cash', 'pos', 'direct_transfer']
   if (
     paymentMethod &&
     validMethods.includes(paymentMethod) &&
-    Number(totalAmount) > 0
+    amountNaira > 0
   ) {
     const reference = `ibam_wk_${crypto
       .randomUUID()
@@ -2264,7 +2297,7 @@ exports.createWalkInLabRequest = asyncHandler(async (req, res, next) => {
       type: 'lab_test',
       serviceRef: request._id,
       serviceModel: 'DiagnosticsRequest',
-      amount: Number(totalAmount),
+      amount: Math.round(amountNaira * 100), // store in kobo, consistent with Paystack
       method: paymentMethod,
       reference,
       status: 'success'
@@ -2315,7 +2348,7 @@ exports.createWalkInLabRequest = asyncHandler(async (req, res, next) => {
         labName: 'iBam Health (Admin)',
         registeredBy: req.user.name || 'Admin',
         tests,
-        totalAmount: Number(totalAmount) || 0,
+        totalAmount: amountNaira,
         paymentMethod
       })
     })

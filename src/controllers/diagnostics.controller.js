@@ -295,6 +295,8 @@ exports.createLabWalkIn = asyncHandler(async (req, res, next) => {
     }
   }
 
+  const amountNaira = Number(totalAmount) || 0
+
   // Create the diagnostics request
   const request = await DiagnosticsRequest.create({
     patient: patient._id,
@@ -306,20 +308,21 @@ exports.createLabWalkIn = asyncHandler(async (req, res, next) => {
       (wellnessPkg
         ? `Booked via "${wellnessPkg.name}" wellness package.`
         : undefined),
-    totalAmount: Number(totalAmount) || 0,
+    totalAmount: amountNaira,
     requiresApproval: false,
     adminApprovalStatus: 'na',
     status: 'assigned',
     walkInExpiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000),
+    registeredBy: req.user._id,
     ...(wellnessPkg ? { wellnessPackage: wellnessPkg._id } : {})
   })
 
-  // Record payment if method + amount provided
+  // Record payment if method + amount provided — store amount in kobo (consistent with Paystack)
   const validMethods = ['walk_in_cash', 'pos', 'direct_transfer']
   if (
     paymentMethod &&
     validMethods.includes(paymentMethod) &&
-    Number(totalAmount) > 0
+    amountNaira > 0
   ) {
     const reference = `ibam_wk_${randomUUID().replace(/-/g, '').slice(0, 12)}`
     const payment = await Payment.create({
@@ -327,7 +330,7 @@ exports.createLabWalkIn = asyncHandler(async (req, res, next) => {
       type: 'lab_test',
       serviceRef: request._id,
       serviceModel: 'DiagnosticsRequest',
-      amount: Number(totalAmount),
+      amount: Math.round(amountNaira * 100), // store in kobo, consistent with Paystack
       method: paymentMethod,
       reference,
       status: 'success'
@@ -397,7 +400,7 @@ exports.createLabWalkIn = asyncHandler(async (req, res, next) => {
       patientName: patient.name,
       patientPhone: patient.phone,
       tests,
-      totalAmount: Number(totalAmount) || 0,
+      totalAmount: amountNaira,
       paymentMethod,
       labName: lab.name,
       isNewPatient,
