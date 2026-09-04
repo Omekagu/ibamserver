@@ -1,5 +1,6 @@
 const User = require('../models/User')
 const Doctor = require('../models/Doctor')
+const Patient = require('../models/Patient')
 const Specialization = require('../models/Specialization')
 const PlatformService = require('../models/PlatformService')
 const LabTest = require('../models/LabTest')
@@ -281,6 +282,31 @@ exports.suspendUser = asyncHandler(async (req, res, next) => {
   )
   if (!user) return next(new AppError('User not found.', 404))
   sendSuccess(res, 200, 'User updated.', { user })
+})
+
+exports.deleteUser = asyncHandler(async (req, res, next) => {
+  const user = await User.findById(req.params.id)
+  if (!user) return next(new AppError('User not found.', 404))
+  if (['admin', 'lab_scientist'].includes(user.role))
+    return next(
+      new AppError(
+        'Use the staff management section to delete staff accounts.',
+        400
+      )
+    )
+  if (user.role === 'doctor') await Doctor.findOneAndDelete({ user: user._id })
+  else if (user.role === 'patient')
+    await Patient.findOneAndDelete({ user: user._id })
+  await User.findByIdAndDelete(user._id)
+  logAction(
+    req.user,
+    'Deleted user account',
+    'User',
+    user._id,
+    { email: user.email, role: user.role },
+    req
+  )
+  sendSuccess(res, 200, 'User permanently deleted.')
 })
 
 exports.getAppointments = asyncHandler(async (req, res) => {
@@ -1050,9 +1076,7 @@ exports.getLabWalkInHistory = asyncHandler(async (req, res) => {
   const filter = { collectionType: 'walk_in', registeredBy: { $exists: true } }
   if (search.trim()) {
     const q = search.trim()
-    filter.$or = [
-      { 'patientSnapshot.name': new RegExp(q, 'i') },
-    ]
+    filter.$or = [{ 'patientSnapshot.name': new RegExp(q, 'i') }]
   }
 
   const [rows, total] = await Promise.all([
@@ -2317,7 +2341,8 @@ exports.createWalkInLabRequest = asyncHandler(async (req, res, next) => {
     metadata: { requestId: request._id }
   }).catch(() => {})
 
-  const hasRealEmail = patient.email && !patient.email.includes('@ibamhealth.guest')
+  const hasRealEmail =
+    patient.email && !patient.email.includes('@ibamhealth.guest')
   if (hasRealEmail) {
     sendWalkInPatientEmail({
       email: patient.email,
@@ -2332,15 +2357,27 @@ exports.createWalkInLabRequest = asyncHandler(async (req, res, next) => {
   notifyAdmins({
     type: 'lab_walk_in_registered',
     title: 'Walk-In Registered',
-    message: `${req.user.name || 'Admin'} registered a walk-in for ${patient.name} (${tests.slice(0, 2).join(', ')}${tests.length > 2 ? ` +${tests.length - 2} more` : ''}).`,
+    message: `${req.user.name || 'Admin'} registered a walk-in for ${
+      patient.name
+    } (${tests.slice(0, 2).join(', ')}${
+      tests.length > 2 ? ` +${tests.length - 2} more` : ''
+    }).`,
     metadata: { requestId: request._id }
   }).catch(() => {})
 
   // Admin email alert to lab_admins
-  User.find({ role: 'admin', adminRole: { $in: ['super_admin', 'lab_admin'] }, isActive: true })
-    .select('email').lean()
+  User.find({
+    role: 'admin',
+    adminRole: { $in: ['super_admin', 'lab_admin'] },
+    isActive: true
+  })
+    .select('email')
+    .lean()
     .then(admins => {
-      const emails = admins.filter(a => String(a._id) !== String(req.user._id)).map(a => a.email).filter(Boolean)
+      const emails = admins
+        .filter(a => String(a._id) !== String(req.user._id))
+        .map(a => a.email)
+        .filter(Boolean)
       if (!emails.length) return
       sendWalkInAdminEmail({
         emails,
@@ -2413,8 +2450,8 @@ exports.createLabAccount = asyncHandler(async (req, res, next) => {
 
 // ── Admin user management ───────────────────────────────────────────────────
 exports.getAdminUsers = asyncHandler(async (req, res) => {
-  const admins = await User.find({ role: 'admin' })
-    .select('name email adminRole isActive createdAt')
+  const admins = await User.find({ role: { $in: ['admin', 'lab_scientist'] } })
+    .select('name email adminRole role isActive createdAt managedLabId')
     .sort({ createdAt: -1 })
   sendSuccess(res, 200, 'Admin users retrieved.', { admins })
 })
@@ -2517,8 +2554,11 @@ exports.updateAdminRole = asyncHandler(async (req, res, next) => {
 })
 
 exports.toggleAdminUser = asyncHandler(async (req, res, next) => {
-  const target = await User.findOne({ _id: req.params.id, role: 'admin' })
-  if (!target) return next(new AppError('Admin user not found.', 404))
+  const target = await User.findOne({
+    _id: req.params.id,
+    role: { $in: ['admin', 'lab_scientist'] }
+  })
+  if (!target) return next(new AppError('Staff user not found.', 404))
   if (req.user._id.toString() === target._id.toString()) {
     return next(new AppError('You cannot deactivate your own account.', 403))
   }
@@ -2547,4 +2587,26 @@ exports.toggleAdminUser = asyncHandler(async (req, res, next) => {
       }
     }
   )
+})
+
+exports.deleteAdminUser = asyncHandler(async (req, res, next) => {
+  const target = await User.findOne({
+    _id: req.params.id,
+    role: { $in: ['admin', 'lab_scientist'] }
+  })
+  if (!target) return next(new AppError('Staff user not found.', 404))
+  if (req.user._id.toString() === target._id.toString()) {
+    return next(new AppError('You cannot delete your own account.', 403))
+  }
+
+  await User.findByIdAndDelete(target._id)
+  logAction(
+    req.user,
+    'Deleted admin account',
+    'User',
+    target._id,
+    { targetEmail: target.email, adminRole: target.adminRole },
+    req
+  )
+  sendSuccess(res, 200, 'Admin user permanently deleted.')
 })

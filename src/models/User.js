@@ -8,7 +8,7 @@ const userSchema = new mongoose.Schema(
     phone: { type: String, unique: true, sparse: true, trim: true },
     role: {
       type: String,
-      enum: ['patient', 'doctor', 'admin', 'lab_partner', 'pharmacy_partner', 'field_agent'],
+      enum: ['patient', 'doctor', 'admin', 'lab_partner', 'pharmacy_partner', 'field_agent', 'lab_scientist'],
       default: 'patient',
     },
     password: { type: String, required: true, select: false, minlength: 8 },
@@ -32,7 +32,7 @@ const userSchema = new mongoose.Schema(
       enum: ['super_admin', 'lab_admin', 'finance_admin', 'support_admin', 'ops_admin'],
       default: 'super_admin',
     },
-    // Only set when role='admin' and adminRole='lab_admin' — links to their managed lab
+    // Set when role='admin' & adminRole='lab_admin', or role='lab_scientist' — links to their lab
     managedLabId: { type: mongoose.Schema.Types.ObjectId, ref: 'LabPartner', default: null },
     expoPushToken: { type: String, default: null },
     loginAttemptCount: { type: Number, default: 0, select: false },

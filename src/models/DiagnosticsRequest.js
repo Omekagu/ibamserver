@@ -36,6 +36,8 @@ const diagnosticsRequestSchema = new mongoose.Schema(
     preferredDate: { type: Date },
     preferredTime: { type: String }, // e.g. "09:00"
     registeredBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // set for staff-created walk-ins
+    assignedScientist: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    scientistNotes: { type: String },
   },
   { timestamps: true }
 );

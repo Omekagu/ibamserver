@@ -135,6 +135,9 @@ app.all('/{*path}', (req, res, next) => {
 
 // Global error handler
 app.use((err, req, res, next) => {
+  // If response already started, delegate to Express default handler to avoid ERR_HTTP_HEADERS_SENT
+  if (res.headersSent) return next(err)
+
   // Normalise known error types first (so dev mode also gets correct status codes)
 
   // JWT errors

@@ -65,21 +65,30 @@ const numberedList = (items) =>
 
 const APP_URL = process.env.CLIENT_URL || 'https://ibamhealth.com';
 
-// ─── Transport ───────────────────────────────────
+// ─── Transport (singleton pool — one persistent connection, not one per email) ─
+let _smtpTransport = null;
+function getSmtpTransport () {
+  if (_smtpTransport) return _smtpTransport;
+  const nodemailer = require('nodemailer');
+  const port   = Number(process.env.SMTP_PORT) || 587;
+  const secure = process.env.SMTP_SECURE === 'true';
+  _smtpTransport = nodemailer.createTransport({
+    pool: true,
+    maxConnections: 3,
+    maxMessages: Infinity,
+    host:   process.env.SMTP_HOST,
+    port,
+    secure,
+    auth:   { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+    tls:    { rejectUnauthorized: process.env.SMTP_REJECT_UNAUTHORIZED === 'true' },
+  });
+  return _smtpTransport;
+}
+
 const sendEmail = async ({ to, subject, html, text }) => {
   if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
-    const nodemailer = require('nodemailer');
-    const port   = Number(process.env.SMTP_PORT) || 587;
-    const secure = process.env.SMTP_SECURE === 'true' || port === 465;
-    const transporter = nodemailer.createTransport({
-      host:   process.env.SMTP_HOST,
-      port,
-      secure,
-      auth:   { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-      tls:    { rejectUnauthorized: process.env.SMTP_REJECT_UNAUTHORIZED === 'true' },
-    });
     try {
-      await transporter.sendMail({ from: FROM, to, subject, html, text });
+      await getSmtpTransport().sendMail({ from: FROM, to, subject, html, text });
       console.log(`[Email] Sent "${subject}" → ${to}`);
     } catch (err) {
       console.error(`[Email] SMTP failed for "${subject}" → ${to}:`, err.message);
@@ -599,12 +608,14 @@ const sendAccountCreatedEmail = ({ email, name, password, role, adminRole }) => 
   const roleLabels = {
     doctor: 'Doctor',
     lab_partner: 'Diagnostic Lab',
+    lab_scientist: 'Lab Scientist',
     pharmacy_partner: 'Pharmacy Partner',
     admin: adminRoleLabel,
   };
   const portals = {
     doctor: `${APP_URL}/doctor`,
     lab_partner: `${APP_URL}/lab`,
+    lab_scientist: `${APP_URL}/partner/lab`,
     pharmacy_partner: `${APP_URL}/pharmacy`,
     admin: `${APP_URL}/login`,
   };
@@ -772,6 +783,26 @@ const sendWalkInAdminEmail = ({ emails, patientName, labName, registeredBy, test
   });
 };
 
+// ─── Lab scientist assigned to a test ────────────────────────────
+const sendScientistAssignedEmail = ({ email, name, tests = [], patientName, labName, requestId }) =>
+  sendEmail({
+    to: email,
+    subject: `Test Assigned to You — ${tests.slice(0, 2).join(', ')}${tests.length > 2 ? ` +${tests.length - 2} more` : ''}`,
+    html: base(`
+      ${h2(`You've been assigned a lab test, ${name}!`)}
+      ${pill('Lab Scientist', '#7C3AED')}
+      ${para(`A test has been assigned to you at <strong>${labName}</strong>. Please log in to view the details and update the status.`)}
+      <div style="margin:20px 0;border:1px solid #E5E7EB;border-radius:12px;overflow:hidden">
+        ${info('Patient', patientName)}
+        ${info('Tests', tests.slice(0, 3).join(', ') + (tests.length > 3 ? ` +${tests.length - 3} more` : ''))}
+        ${info('Booking Ref', `#${String(requestId).slice(-8).toUpperCase()}`)}
+      </div>
+      ${para('Log in to mark the sample collected, update progress, and upload the result when ready.')}
+      ${btn(`${APP_URL}/partner/lab`, 'Open Lab Portal')}
+    `),
+    text: `Hi ${name}, you've been assigned a lab test at ${labName}. Patient: ${patientName}. Tests: ${tests.join(', ')}. Log in at ${APP_URL}/partner/lab to proceed.`,
+  });
+
 module.exports = {
   sendEmail,
   sendNewLabRequestAdminEmail,
@@ -806,6 +837,7 @@ module.exports = {
   sendSampleCollectedEmail,
   sendHomeVisitScheduledEmail,
   sendAccountCreatedEmail,
+  sendScientistAssignedEmail,
   sendAppointmentReminderEmail,
   sendEmergencyTriageEmail,
 };

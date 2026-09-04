@@ -18,7 +18,8 @@ router.put('/doctors/:id/approve', audit('approve_doctor', 'Doctor'), ctrl.appro
 router.put('/kyc/:userId/verify', audit('manual_kyc_verify', 'User'), ctrl.manualKycVerify);
 router.get('/users', ctrl.getUsers);
 router.get('/users/:id/profile', ctrl.getUserProfile);
-router.put('/users/:id/suspend', audit('suspend_user', 'User'), ctrl.suspendUser);
+router.put('/users/:id/suspend', audit('suspend_user', 'User'), ctrl.suspendUser)
+router.delete('/users/:id', audit('delete_user', 'User'), ctrl.deleteUser);
 router.get('/appointments', ctrl.getAppointments);
 router.get('/payments', ctrl.getPayments);
 router.put('/payments/:id/confirm', audit('confirm_payment', 'Payment'), ctrl.confirmPayment);
@@ -110,5 +111,6 @@ router.get('/admin-users', ctrl.getAdminUsers);
 router.post('/admin-users', audit('create_admin_user', 'User'), ctrl.createAdminUser);
 router.put('/admin-users/:id/role', audit('update_admin_role', 'User'), ctrl.updateAdminRole);
 router.put('/admin-users/:id/toggle', audit('toggle_admin_user', 'User'), ctrl.toggleAdminUser);
+router.delete('/admin-users/:id', audit('delete_admin_user', 'User'), ctrl.deleteAdminUser);
 
 module.exports = router;

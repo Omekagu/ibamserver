@@ -1,6 +1,6 @@
 const AuditLog = require('../models/AuditLog');
 
-const AUDITED_ROLES = ['admin', 'lab_partner'];
+const AUDITED_ROLES = ['admin', 'lab_partner', 'lab_scientist'];
 
 const audit = (action, targetModel) => async (req, res, next) => {
   res.on('finish', async () => {

@@ -95,8 +95,7 @@ exports.register = asyncHandler(async (req, res, next) => {
   }).catch(() => {});
 
   const tokens = issueTokens(user);
-  user.refreshToken = tokens.refreshToken;
-  await user.save({ validateBeforeSave: false });
+  await User.findByIdAndUpdate(user._id, { refreshToken: tokens.refreshToken });
 
   sendSuccess(res, 201, 'Registration successful.', { user, ...tokens });
 });
@@ -134,12 +133,12 @@ exports.login = asyncHandler(async (req, res, next) => {
   if (!user.isActive) return next(new AppError('Account deactivated. Contact support.', 403));
   if (!user.isVerified) return next(new AppError('Please verify your email before logging in.', 403));
 
-  // Admin accounts require a one-time OTP before tokens are issued
-  if (user.role === 'admin') {
+  // Admin and lab scientist accounts require a one-time OTP before tokens are issued
+  if (user.role === 'admin' || user.role === 'lab_scientist') {
     const otp = generateOTP();
     storeOTP(`admin_login:${user._id}`, otp);
     sendOTPEmail(user.email, otp).catch(() => {});
-    return sendSuccess(res, 200, 'OTP sent to your admin email.', {
+    return sendSuccess(res, 200, 'OTP sent to your email.', {
       requiresAdminOtp: true,
       adminUserId: user._id.toString(),
     });
@@ -157,7 +156,7 @@ exports.verifyAdminLoginOtp = asyncHandler(async (req, res, next) => {
   if (!adminUserId || !otp) return next(new AppError('adminUserId and otp are required.', 400));
 
   const user = await User.findById(adminUserId);
-  if (!user || user.role !== 'admin') return next(new AppError('Invalid request.', 400));
+  if (!user || !['admin', 'lab_scientist'].includes(user.role)) return next(new AppError('Invalid request.', 400));
   if (!user.isActive) return next(new AppError('Account deactivated. Contact support.', 403));
 
   const valid = verifyOTP(`admin_login:${adminUserId}`, otp);
@@ -398,7 +397,7 @@ exports.googleCallback = asyncHandler(async (req, res) => {
   }
 
   // Partner and admin accounts must use email/password
-  const restricted = ['pharmacy_partner', 'lab_partner', 'admin', 'field_agent'];
+  const restricted = ['pharmacy_partner', 'lab_partner', 'admin', 'field_agent', 'lab_scientist'];
   if (restricted.includes(user.role)) {
     return res.redirect(errorDest('This account type does not support Google sign-in. Please log in with your email and password.'));
   }

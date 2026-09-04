@@ -19,7 +19,9 @@ const {
   sendAdminAlertEmail,
   sendNewLabRequestAdminEmail,
   sendWalkInAdminEmail,
-  sendWalkInPatientEmail
+  sendWalkInPatientEmail,
+  sendAccountCreatedEmail,
+  sendScientistAssignedEmail
 } = require('../services/email.service')
 const AuditLog = require('../models/AuditLog')
 const { sendSuccess } = require('../utils/response')
@@ -60,6 +62,8 @@ async function getLabForUser (user) {
     user.adminRole === 'lab_admin' &&
     user.managedLabId
   )
+    return LabPartner.findById(user.managedLabId)
+  if (user.role === 'lab_scientist' && user.managedLabId)
     return LabPartner.findById(user.managedLabId)
   return null
 }
@@ -144,7 +148,12 @@ exports.onboardLab = asyncHandler(async (req, res, next) => {
 exports.getLabProfile = asyncHandler(async (req, res, next) => {
   const lab = await getLabForUser(req.user)
   if (!lab) return next(new AppError('Lab partner record not found.', 404))
-  sendSuccess(res, 200, 'Lab profile retrieved.', { lab })
+  sendSuccess(res, 200, 'Lab profile retrieved.', {
+    lab,
+    userRole: req.user.role,
+    userName: req.user.name,
+    adminRole: req.user.adminRole
+  })
 })
 
 exports.updateLabProfile = asyncHandler(async (req, res, next) => {
@@ -368,12 +377,21 @@ exports.createLabWalkIn = asyncHandler(async (req, res, next) => {
   notifyAdmins({
     type: 'lab_walk_in_registered',
     title: 'Walk-In Registered',
-    message: `${req.user.name || 'Lab staff'} at ${lab.name} registered a walk-in for ${patient.name} (${tests.slice(0, 2).join(', ')}${tests.length > 2 ? ` +${tests.length - 2} more` : ''}).`,
+    message: `${req.user.name || 'Lab staff'} at ${
+      lab.name
+    } registered a walk-in for ${patient.name} (${tests
+      .slice(0, 2)
+      .join(', ')}${tests.length > 2 ? ` +${tests.length - 2} more` : ''}).`,
     metadata: { requestId: request._id, labId: lab._id }
   }).catch(() => {})
 
-  User.find({ role: 'admin', adminRole: { $in: ['super_admin', 'lab_admin'] }, isActive: true })
-    .select('email').lean()
+  User.find({
+    role: 'admin',
+    adminRole: { $in: ['super_admin', 'lab_admin'] },
+    isActive: true
+  })
+    .select('email')
+    .lean()
     .then(admins => {
       const emails = admins.map(a => a.email).filter(Boolean)
       if (!emails.length) return
@@ -505,7 +523,11 @@ exports.requestTests = asyncHandler(async (req, res, next) => {
   notifyAdmins({
     type: 'lab_request_placed',
     title: 'New Lab Test Request',
-    message: `${req.user.name || 'A patient'} submitted a ${collectionType === 'home_visit' ? 'home visit' : 'walk-in'} request for ${tests.slice(0, 2).join(', ')}${tests.length > 2 ? ` +${tests.length - 2} more` : ''}.`,
+    message: `${req.user.name || 'A patient'} submitted a ${
+      collectionType === 'home_visit' ? 'home visit' : 'walk-in'
+    } request for ${tests.slice(0, 2).join(', ')}${
+      tests.length > 2 ? ` +${tests.length - 2} more` : ''
+    }.`,
     metadata: { requestId: request._id }
   }).catch(() => {})
 
@@ -607,6 +629,7 @@ exports.getLabRequests = asyncHandler(async (req, res) => {
   // Mine: requests this lab has claimed / is processing
   const mine = await DiagnosticsRequest.find({ lab: lab._id })
     .populate('patient', 'name phone email _id')
+    .populate('assignedScientist', 'name email')
     .populate({
       path: 'paymentRef',
       select: 'status amount method reference transferReference'
@@ -699,6 +722,13 @@ exports.uploadResult = asyncHandler(async (req, res, next) => {
 
   const request = await DiagnosticsRequest.findById(req.params.id)
   if (!request) return next(new AppError('Request not found.', 404))
+
+  // Scientists can only upload for requests assigned to them
+  if (
+    req.user.role === 'lab_scientist' &&
+    request.assignedScientist?.toString() !== req.user._id.toString()
+  )
+    return next(new AppError('You are not assigned to this request.', 403))
 
   const pdfBuffer = await toPdf(req.file.buffer, req.file.mimetype)
   let result_file
@@ -1072,4 +1102,195 @@ exports.getAgentSchedule = asyncHandler(async (req, res) => {
     .populate('patient', 'name phone')
     .sort({ scheduledAt: 1 })
   sendSuccess(res, 200, 'Agent schedule retrieved.', { visits })
+})
+
+// ─── Lab Scientist management ─────────────────────────────────────────────────
+
+exports.getLabScientists = asyncHandler(async (req, res, next) => {
+  const lab = await getLabForUser(req.user)
+  if (!lab) return next(new AppError('Lab not found.', 404))
+
+  const scientists = await User.find({
+    role: 'lab_scientist',
+    managedLabId: lab._id,
+    isActive: true
+  })
+    .select('name email phone createdAt')
+    .sort({ createdAt: -1 })
+    .lean()
+
+  sendSuccess(res, 200, 'Scientists retrieved.', { scientists })
+})
+
+exports.createLabScientist = asyncHandler(async (req, res, next) => {
+  const lab = await getLabForUser(req.user)
+  if (!lab) return next(new AppError('Lab not found.', 404))
+
+  const { name, email, phone, password } = req.body
+  if (!name || !email || !password)
+    return next(new AppError('name, email, and password are required.', 400))
+
+  const existing = await User.findOne({ email: email.toLowerCase().trim() })
+  if (existing)
+    return next(new AppError('An account with this email already exists.', 409))
+
+  const scientist = await User.create({
+    name,
+    email: email.toLowerCase().trim(),
+    phone: phone?.trim() || undefined,
+    password,
+    role: 'lab_scientist',
+    managedLabId: lab._id,
+    isVerified: true,
+    isActive: true
+  })
+
+  sendAccountCreatedEmail({
+    email: scientist.email,
+    name: scientist.name,
+    password,
+    role: 'lab_scientist'
+  }).catch(() => {})
+
+  sendSuccess(res, 201, 'Lab scientist account created.', {
+    scientist: {
+      _id: scientist._id,
+      name: scientist.name,
+      email: scientist.email,
+      phone: scientist.phone,
+      createdAt: scientist.createdAt
+    }
+  })
+})
+
+exports.assignScientist = asyncHandler(async (req, res, next) => {
+  const lab = await getLabForUser(req.user)
+  if (!lab) return next(new AppError('Lab not found.', 404))
+
+  const { scientistId } = req.body
+  if (!scientistId) return next(new AppError('scientistId is required.', 400))
+
+  const scientist = await User.findOne({
+    _id: scientistId,
+    role: 'lab_scientist',
+    managedLabId: lab._id,
+    isActive: true
+  }).select('name email')
+  if (!scientist)
+    return next(new AppError('Scientist not found or not in this lab.', 404))
+
+  const request = await DiagnosticsRequest.findOne({
+    _id: req.params.id,
+    lab: lab._id
+  }).populate('patient', 'name')
+  if (!request) return next(new AppError('Request not found.', 404))
+
+  request.assignedScientist = scientistId
+  if (request.status === 'assigned') request.status = 'processing'
+  await request.save()
+
+  createNotification({
+    userId: scientistId,
+    type: 'lab_request_placed',
+    title: 'Test Assigned to You',
+    message: `You have been assigned: ${request.tests.slice(0, 2).join(', ')}${
+      request.tests.length > 2 ? ` +${request.tests.length - 2} more` : ''
+    }.`,
+    metadata: { requestId: request._id }
+  }).catch(() => {})
+
+  sendScientistAssignedEmail({
+    email: scientist.email,
+    name: scientist.name,
+    tests: request.tests,
+    patientName: request.patient?.name || 'Patient',
+    labName: lab.name,
+    requestId: request._id
+  }).catch(() => {})
+
+  sendSuccess(res, 200, 'Scientist assigned.', {
+    request: {
+      _id: request._id,
+      status: request.status,
+      assignedScientist: scientist
+    }
+  })
+})
+
+exports.getScientistRequests = asyncHandler(async (req, res) => {
+  const { page = 1, limit = 30, history } = req.query
+  const skip = (Number(page) - 1) * Number(limit)
+
+  const filter = { assignedScientist: req.user._id }
+  if (history === 'true') {
+    filter.status = { $in: ['completed', 'cancelled'] }
+  } else {
+    filter.status = { $nin: ['completed', 'cancelled'] }
+  }
+
+  const [requests, total] = await Promise.all([
+    DiagnosticsRequest.find(filter)
+      .populate('patient', 'name phone email')
+      .populate('lab', 'name')
+      .populate({ path: 'paymentRef', select: 'amount method status' })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(Number(limit))
+      .lean(),
+    DiagnosticsRequest.countDocuments(filter)
+  ])
+
+  const requestIds = requests.map(r => r._id)
+  const resultDocs = await LabResult.find({ request: { $in: requestIds } })
+    .select('request fileUrl notes createdAt')
+    .lean()
+  const resultMap = Object.fromEntries(
+    resultDocs.map(r => [r.request.toString(), r])
+  )
+
+  const expiresAt = Math.floor(Date.now() / 1000) + 7200
+  const enriched = requests.map(r => {
+    const result = resultMap[r._id.toString()] ?? null
+    if (result?.fileUrl)
+      result.signedUrl = signResultUrl(result.fileUrl, expiresAt)
+    return { ...r, result }
+  })
+
+  sendSuccess(res, 200, 'Scientist requests retrieved.', {
+    requests: enriched,
+    total
+  })
+})
+
+exports.updateScientistStatus = asyncHandler(async (req, res, next) => {
+  const { status, scientistNotes } = req.body
+
+  const request = await DiagnosticsRequest.findOne({
+    _id: req.params.id,
+    assignedScientist: req.user._id
+  })
+  if (!request)
+    return next(new AppError('Request not found or not assigned to you.', 404))
+
+  const allowed = ['sample_collected', 'processing', 'completed', 'no_show']
+  if (!allowed.includes(status))
+    return next(
+      new AppError(`Status must be one of: ${allowed.join(', ')}.`, 400)
+    )
+
+  request.status = status
+  if (scientistNotes) request.scientistNotes = scientistNotes
+  await request.save()
+
+  if (status === 'completed') {
+    createNotification({
+      userId: request.patient,
+      type: 'lab_result_ready',
+      title: 'Lab Test Complete',
+      message: 'Your lab test has been completed. Check your results.',
+      metadata: { requestId: request._id }
+    }).catch(() => {})
+  }
+
+  sendSuccess(res, 200, 'Status updated.', { request })
 })
