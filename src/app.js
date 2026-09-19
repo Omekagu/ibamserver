@@ -35,9 +35,15 @@ if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
   console.error('[FATAL] JWT_SECRET must be at least 32 characters. Exiting.')
   process.exit(1)
 }
-if (!process.env.PAYSTACK_SECRET_KEY) {
-  console.error('[FATAL] PAYSTACK_SECRET_KEY is not set. Exiting.')
+// Require at least one payment provider to be configured
+const hasPaystack = !!process.env.PAYSTACK_SECRET_KEY
+const hasMonnify  = !!process.env.MONNIFY_API_KEY && !!process.env.MONNIFY_SECRET_KEY
+if (!hasPaystack && !hasMonnify) {
+  console.error('[FATAL] No payment provider configured. Set PAYSTACK_SECRET_KEY or MONNIFY_API_KEY+MONNIFY_SECRET_KEY. Exiting.')
   process.exit(1)
+}
+if (!hasPaystack) {
+  console.warn('[WARN] PAYSTACK_SECRET_KEY is not set — Monnify is the only available payment provider.')
 }
 
 const app = express()
@@ -75,8 +81,9 @@ app.use(
 app.use(compression())
 if (process.env.NODE_ENV !== 'test') app.use(morgan('dev'))
 
-// Paystack webhook needs raw body — must come before express.json()
-app.use('/api/payments/webhook', express.raw({ type: 'application/json' }))
+// Webhook routes need raw body — must come before express.json()
+app.use('/api/payments/webhook',         express.raw({ type: 'application/json' }))
+app.use('/api/payments/monnify-webhook', express.raw({ type: 'application/json' }))
 
 app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ extended: true }))

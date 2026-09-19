@@ -3,10 +3,21 @@ const mongoose = require('mongoose');
 // Singleton document — only one settings record ever exists
 const platformSettingsSchema = new mongoose.Schema(
   {
-    // Paystack toggle and API keys (keys stored encrypted in DB; env fallback)
-    paystackEnabled:      { type: Boolean, default: true },
-    paystackSecretKey:    { type: String, default: '' },
-    paystackPublicKey:    { type: String, default: '' },
+    // Active payment provider — 'paystack' | 'monnify'
+    paymentProvider: { type: String, enum: ['paystack', 'monnify'], default: 'paystack' },
+
+    // Paystack toggle and API keys (keys stored in DB; env fallback)
+    paystackEnabled:   { type: Boolean, default: true },
+    paystackSecretKey: { type: String, default: '' },
+    paystackPublicKey: { type: String, default: '' },
+
+    // Monnify credentials
+    monnifyEnabled:              { type: Boolean, default: false },
+    monnifyApiKey:               { type: String, default: '' },
+    monnifySecretKey:            { type: String, default: '' },
+    monnifyContractCode:         { type: String, default: '' },
+    monnifyBaseUrl:              { type: String, default: 'https://sandbox.monnify.com' },
+    monnifySourceAccountNumber:  { type: String, default: '' },
 
     // OTP for unlocking payment key changes
     settingsOtpHash:   { type: String, select: false },

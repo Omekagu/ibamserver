@@ -7,12 +7,7 @@ const Prescription = require('../models/Prescription')
 const DiagnosticsRequest = require('../models/DiagnosticsRequest')
 const PartnerEarning = require('../models/PartnerEarning')
 const Doctor = require('../models/Doctor')
-const {
-  initializeTransaction,
-  verifyTransaction,
-  createTransferRecipient,
-  initiateTransfer
-} = require('../services/paystack.service')
+const { getPaymentGateway, getProviderName } = require('../services/payment.gateway')
 const PlatformSettings = require('../models/PlatformSettings')
 const PharmacyPartner = require('../models/PharmacyPartner')
 const LabPartner = require('../models/LabPartner')
@@ -29,38 +24,46 @@ const { sendSuccess } = require('../utils/response')
 const AppError = require('../utils/AppError')
 const asyncHandler = require('../utils/asyncHandler')
 
-// Attempt Paystack auto-payout for a partner earning; silently swallows errors.
+// Attempt auto-payout for a partner earning via the active payment provider.
+// Silently swallows errors so it never blocks a payment verify response.
 async function tryAutoPartnerPayout (earning) {
   try {
     const settings = await PlatformSettings.findOne().lean()
-    if (!settings?.paystackEnabled) return
-    const key = settings.paystackSecretKey || process.env.PAYSTACK_SECRET_KEY
-    if (!key) return
+    const provider = settings?.paymentProvider || process.env.PAYMENT_PROVIDER || 'paystack'
 
-    const Profile =
-      earning.partnerType === 'pharmacy' ? PharmacyPartner : LabPartner
+    // Gate: Paystack requires paystackEnabled + key; Monnify requires monnifyEnabled + credentials
+    if (provider === 'paystack') {
+      if (!settings?.paystackEnabled) return
+      const key = settings.paystackSecretKey || process.env.PAYSTACK_SECRET_KEY
+      if (!key) return
+    } else {
+      if (!settings?.monnifyEnabled) return
+      const apiKey = settings.monnifyApiKey || process.env.MONNIFY_API_KEY
+      if (!apiKey) return
+    }
+
+    const Profile = earning.partnerType === 'pharmacy' ? PharmacyPartner : LabPartner
     const profile = await Profile.findOne({ user: earning.partner }).lean()
     const bank = profile?.bankAccount
     if (!bank?.accountNumber || !bank?.bankCode) return
 
-    const recipient = await createTransferRecipient({
+    const gateway = await getPaymentGateway()
+    const recipient = await gateway.createTransferRecipient({
       name: bank.accountName || earning.partnerName || 'Partner',
       accountNumber: bank.accountNumber,
       bankCode: bank.bankCode
     })
-    await initiateTransfer({
+    await gateway.initiateTransfer({
       amount: earning.netAmount,
       recipient: recipient.recipient_code,
-      reason: `iBam Health payout â€" ${
-        earning.partnerName || earning.partnerType
-      }`
+      reason: `iBam Health payout – ${earning.partnerName || earning.partnerType}`
     })
     await PartnerEarning.findByIdAndUpdate(earning._id, {
       payoutStatus: 'paid',
       paidAt: new Date()
     })
   } catch {
-    /* non-fatal  leave earning as pending */
+    /* non-fatal — leave earning as pending */
   }
 }
 
@@ -76,22 +79,26 @@ exports.initiate = asyncHandler(async (req, res, next) => {
   const paymentType = type === 'appointment_booking' ? 'consultation' : type
   const effectiveRefId = serviceId || referenceId
 
-  // Resolve provider's Paystack subaccount for automatic split at transaction time.
-  // Lab tests are excluded — the lab is assigned after payment, so splitting happens
-  // via manual transfer in the verify handler once a lab claims the request.
+  const provider = await getProviderName()
+  const subaccountField = provider === 'monnify' ? 'monnifySubAccountCode' : 'subaccountCode'
+
+  // Resolve provider subaccount for automatic split at transaction time.
+  // Lab tests excluded — lab assigned post-payment; split handled in verify handler.
   let subaccount = null
   if (paymentType === 'consultation' && effectiveRefId) {
     const appt = await Appointment.findById(effectiveRefId).select('doctor').lean()
     if (appt?.doctor) {
-      const doc = await Doctor.findOne({ user: appt.doctor }).select('subaccountCode').lean()
-        .catch(() => null)
-      // Doctor model's user field may differ — try findById if user lookup failed
-      || await Doctor.findById(appt.doctor).select('subaccountCode').lean().catch(() => null)
-      subaccount = doc?.subaccountCode || null
+      const doc =
+        await Doctor.findOne({ user: appt.doctor }).select(subaccountField).lean().catch(() => null) ||
+        await Doctor.findById(appt.doctor).select(subaccountField).lean().catch(() => null)
+      subaccount = doc?.[subaccountField] || null
     }
   } else if (paymentType === 'pharmacy' && effectiveRefId) {
-    const order = await PharmacyOrder.findById(effectiveRefId).select('pharmacy').populate('pharmacy', 'subaccountCode').lean()
-    subaccount = order?.pharmacy?.subaccountCode || null
+    const order = await PharmacyOrder.findById(effectiveRefId)
+      .select('pharmacy')
+      .populate('pharmacy', subaccountField)
+      .lean()
+    subaccount = order?.pharmacy?.[subaccountField] || null
   }
 
   const reference = `ibam_${randomUUID().replace(/-/g, '').slice(0, 16)}`
@@ -101,42 +108,58 @@ exports.initiate = asyncHandler(async (req, res, next) => {
     amount: amount * 100,
     reference,
     type: paymentType,
-    method: 'paystack',
+    method: provider,
     serviceRef: effectiveRefId,
     batchRefs: Array.isArray(batchRefs) ? batchRefs : [],
     subaccountCode: subaccount || undefined,
   })
 
-  const paystackData = await initializeTransaction({
+  const gateway = await getPaymentGateway()
+  const gatewayData = await gateway.initializeTransaction({
     email: req.user.email,
     amount,
     reference,
-    metadata: { type: paymentType, serviceId: effectiveRefId, userId: req.user._id },
+    metadata: { type: paymentType, serviceId: effectiveRefId, userId: req.user._id, userName: req.user.name },
     ...(subaccount ? { subaccount, bearer: 'account' } : {}),
   })
 
-  const settings = await PlatformSettings.findOne().select('paystackPublicKey').lean()
-  const paystackPublicKey = settings?.paystackPublicKey || process.env.PAYSTACK_PUBLIC_KEY || ''
+  const settings = await PlatformSettings.findOne()
+    .select('paystackPublicKey monnifyApiKey')
+    .lean()
+
+  const publicKey =
+    provider === 'monnify'
+      ? (settings?.monnifyApiKey || process.env.MONNIFY_API_KEY || '')
+      : (settings?.paystackPublicKey || process.env.PAYSTACK_PUBLIC_KEY || '')
 
   sendSuccess(res, 200, 'Payment initialised.', {
     paymentId: payment._id,
     reference,
-    authorizationUrl: paystackData.authorization_url,
-    accessCode: paystackData.access_code,
-    paystackPublicKey
+    provider,
+    authorizationUrl: gatewayData.authorization_url,
+    accessCode: gatewayData.access_code,
+    // Legacy field — kept for older clients that still read paystackPublicKey
+    paystackPublicKey: provider === 'paystack' ? publicKey : '',
+    publicKey,
   })
 })
 
 exports.verify = asyncHandler(async (req, res, next) => {
   const { reference } = req.params
-  const paystackData = await verifyTransaction(reference)
 
   const payment = await Payment.findOne({ reference })
   if (!payment) return next(new AppError('Payment record not found.', 404))
 
-  if (paystackData.status === 'success') {
+  // Use the provider that was active when this payment was created
+  const provider = payment.method || await getProviderName()
+  const gateway = provider === 'monnify'
+    ? require('../services/monnify.service')
+    : require('../services/paystack.service')
+  const gatewayData = await gateway.verifyTransaction(reference)
+
+  if (gatewayData.status === 'success') {
     payment.status = 'success'
-    payment.paystackRef = paystackData.reference
+    payment.paystackRef = gatewayData.reference
     await payment.save()
 
     if (payment.type === 'consultation' && payment.serviceRef) {
@@ -463,6 +486,7 @@ exports.verify = asyncHandler(async (req, res, next) => {
 
     // On payment failure, cancel the appointment and free the slot
     if (payment.type === 'consultation' && payment.serviceRef) {
+
       const appt = await Appointment.findByIdAndUpdate(
         payment.serviceRef,
         { status: 'cancelled', cancellationReason: 'Payment failed' },
@@ -500,6 +524,30 @@ exports.webhook = asyncHandler(async (req, res) => {
     if (payment && payment.status !== 'success') {
       payment.status = 'success'
       payment.paystackRef = event.data.reference
+      await payment.save()
+    }
+  }
+  res.sendStatus(200)
+})
+
+exports.monnifyWebhook = asyncHandler(async (req, res) => {
+  // Monnify sends a JSON body with HMAC-SHA512 signature in x-monnify-signature header.
+  // Signature = HMAC-SHA512(rawBody, secretKey)
+  const signature = req.headers['x-monnify-signature']
+  const secret = process.env.MONNIFY_SECRET_KEY
+  if (!secret || !signature) return res.sendStatus(401)
+
+  const hash = createHmac('sha512', secret).update(req.body).digest('hex')
+  if (hash !== signature) return res.sendStatus(401)
+
+  const event = JSON.parse(req.body)
+  // Monnify sends eventType 'SUCCESSFUL_TRANSACTION' on successful payments
+  if (event.eventType === 'SUCCESSFUL_TRANSACTION') {
+    const { paymentReference } = event.eventData
+    const payment = await Payment.findOne({ reference: paymentReference })
+    if (payment && payment.status !== 'success') {
+      payment.status = 'success'
+      payment.paystackRef = paymentReference // reusing field for any provider ref
       await payment.save()
     }
   }

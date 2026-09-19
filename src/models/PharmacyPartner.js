@@ -44,7 +44,8 @@ const pharmacyPartnerSchema = new mongoose.Schema(
       verified:      { type: Boolean, default: false },
       verifiedAt:    { type: Date },
     },
-    subaccountCode: { type: String, default: null },
+    subaccountCode:        { type: String, default: null },
+    monnifySubAccountCode: { type: String, default: null },
   },
   { timestamps: true }
 );

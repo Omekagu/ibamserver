@@ -34,32 +34,37 @@ const {
   sendWalkInPatientEmail,
   sendWalkInAdminEmail
 } = require('../services/email.service')
-const {
-  createTransferRecipient,
-  initiateTransfer
-} = require('../services/paystack.service')
+const { getPaymentGateway } = require('../services/payment.gateway')
 const crypto = require('crypto')
 
-// Silently attempt Paystack auto-payout for partner earnings on manual confirm
+// Silently attempt auto-payout for partner earnings on manual confirm
 async function tryAutoPartnerPayout (earning, partnerType) {
   try {
     const settings = await PlatformSettings.findOne().lean()
-    if (!settings?.paystackEnabled) return
-    const key = settings.paystackSecretKey || process.env.PAYSTACK_SECRET_KEY
-    if (!key) return
+    const provider = settings?.paymentProvider || process.env.PAYMENT_PROVIDER || 'paystack'
+    if (provider === 'paystack') {
+      if (!settings?.paystackEnabled) return
+      const key = settings.paystackSecretKey || process.env.PAYSTACK_SECRET_KEY
+      if (!key) return
+    } else {
+      if (!settings?.monnifyEnabled) return
+      const apiKey = settings.monnifyApiKey || process.env.MONNIFY_API_KEY
+      if (!apiKey) return
+    }
     const Profile = partnerType === 'pharmacy' ? PharmacyPartner : LabPartner
     const profile = await Profile.findOne({ user: earning.partner }).lean()
     const bank = profile?.bankAccount
     if (!bank?.accountNumber || !bank?.bankCode) return
-    const recipient = await createTransferRecipient({
+    const gateway = await getPaymentGateway()
+    const recipient = await gateway.createTransferRecipient({
       name: bank.accountName || earning.partnerName || 'Partner',
       accountNumber: bank.accountNumber,
       bankCode: bank.bankCode
     })
-    await initiateTransfer({
+    await gateway.initiateTransfer({
       amount: earning.netAmount,
       recipient: recipient.recipient_code,
-      reason: `iBam Health payout â€“ ${earning.partnerName || partnerType}`
+      reason: `iBam Health payout – ${earning.partnerName || partnerType}`
     })
     await PartnerEarning.findByIdAndUpdate(earning._id, {
       payoutStatus: 'paid',
@@ -1163,11 +1168,14 @@ exports.getPublicContent = asyncHandler(async (req, res) => {
 exports.getSettings = asyncHandler(async (req, res) => {
   let settings = await PlatformSettings.findOne().lean()
   if (!settings) settings = await PlatformSettings.create({})
-  // Never expose secret key to client  send a flag instead
+  // Never expose secret keys to client — send flag indicators instead
   const out = {
     ...settings,
-    paystackSecretKey: undefined,
-    paystackKeySet: !!settings.paystackSecretKey
+    paystackSecretKey:  undefined,
+    paystackKeySet:     !!settings.paystackSecretKey,
+    monnifySecretKey:   undefined,
+    monnifyKeySet:      !!settings.monnifySecretKey,
+    monnifyApiKeySet:   !!settings.monnifyApiKey,
   }
   sendSuccess(res, 200, 'Settings retrieved.', { settings: out })
 })
@@ -1189,9 +1197,16 @@ exports.requestSettingsOtp = asyncHandler(async (req, res) => {
 
 exports.updateSettings = asyncHandler(async (req, res, next) => {
   const {
+    paymentProvider,
     paystackEnabled,
     paystackSecretKey,
     paystackPublicKey,
+    monnifyEnabled,
+    monnifyApiKey,
+    monnifySecretKey,
+    monnifyContractCode,
+    monnifyBaseUrl,
+    monnifySourceAccountNumber,
     otp,
     directPaymentEnabled,
     companyBankName,
@@ -1203,12 +1218,13 @@ exports.updateSettings = asyncHandler(async (req, res, next) => {
     healthTips
   } = req.body
 
-  // OTP required when changing API keys
-  if (paystackSecretKey !== undefined || paystackPublicKey !== undefined) {
+  // OTP required when changing any secret API keys
+  const changingSecretKey = paystackSecretKey !== undefined || monnifySecretKey !== undefined || monnifyApiKey !== undefined
+  if (changingSecretKey) {
     const current = await PlatformSettings.findOne()
       .select('+settingsOtpHash +settingsOtpExpiry')
       .lean()
-    const currentHasKey = !!current?.paystackSecretKey
+    const currentHasKey = !!current?.paystackSecretKey || !!current?.monnifySecretKey
 
     if (currentHasKey) {
       if (!otp)
@@ -1226,28 +1242,30 @@ exports.updateSettings = asyncHandler(async (req, res, next) => {
   }
 
   const update = {}
-  if (typeof paystackEnabled === 'boolean')
-    update.paystackEnabled = paystackEnabled
-  if (paystackSecretKey !== undefined)
-    update.paystackSecretKey = paystackSecretKey
-  if (paystackPublicKey !== undefined)
-    update.paystackPublicKey = paystackPublicKey
+  if (paymentProvider !== undefined && ['paystack', 'monnify'].includes(paymentProvider))
+    update.paymentProvider = paymentProvider
+  if (typeof paystackEnabled === 'boolean')   update.paystackEnabled   = paystackEnabled
+  if (paystackSecretKey !== undefined)        update.paystackSecretKey = paystackSecretKey
+  if (paystackPublicKey !== undefined)        update.paystackPublicKey = paystackPublicKey
+  if (typeof monnifyEnabled === 'boolean')    update.monnifyEnabled    = monnifyEnabled
+  if (monnifyApiKey !== undefined)            update.monnifyApiKey     = monnifyApiKey
+  if (monnifySecretKey !== undefined)         update.monnifySecretKey  = monnifySecretKey
+  if (monnifyContractCode !== undefined)      update.monnifyContractCode = monnifyContractCode
+  if (monnifyBaseUrl !== undefined)           update.monnifyBaseUrl    = monnifyBaseUrl
+  if (monnifySourceAccountNumber !== undefined) update.monnifySourceAccountNumber = monnifySourceAccountNumber
   if (typeof directPaymentEnabled === 'boolean')
     update.directPaymentEnabled = directPaymentEnabled
-  if (companyBankName !== undefined) update.companyBankName = companyBankName
-  if (companyAccountNumber !== undefined)
-    update.companyAccountNumber = companyAccountNumber
-  if (companyAccountName !== undefined)
-    update.companyAccountName = companyAccountName
-  if (companyBankCode !== undefined) update.companyBankCode = companyBankCode
-  if (directPaymentNote !== undefined)
-    update.directPaymentNote = directPaymentNote
-  if (announcement !== undefined) update.announcement = announcement
-  if (Array.isArray(healthTips)) update.healthTips = healthTips
+  if (companyBankName !== undefined)      update.companyBankName      = companyBankName
+  if (companyAccountNumber !== undefined) update.companyAccountNumber = companyAccountNumber
+  if (companyAccountName !== undefined)   update.companyAccountName   = companyAccountName
+  if (companyBankCode !== undefined)      update.companyBankCode      = companyBankCode
+  if (directPaymentNote !== undefined)    update.directPaymentNote    = directPaymentNote
+  if (announcement !== undefined)         update.announcement         = announcement
+  if (Array.isArray(healthTips))          update.healthTips           = healthTips
 
   // Clear OTP after use
   if (otp) {
-    update.settingsOtpHash = null
+    update.settingsOtpHash   = null
     update.settingsOtpExpiry = null
   }
 
@@ -1258,7 +1276,10 @@ exports.updateSettings = asyncHandler(async (req, res, next) => {
   const out = {
     ...settings,
     paystackSecretKey: undefined,
-    paystackKeySet: !!settings.paystackSecretKey
+    paystackKeySet:    !!settings.paystackSecretKey,
+    monnifySecretKey:  undefined,
+    monnifyKeySet:     !!settings.monnifySecretKey,
+    monnifyApiKeySet:  !!settings.monnifyApiKey,
   }
   sendSuccess(res, 200, 'Settings updated.', { settings: out })
 })
