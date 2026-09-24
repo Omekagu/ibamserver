@@ -218,6 +218,7 @@ exports.createLabWalkIn = asyncHandler(async (req, res, next) => {
     totalAmount: rawTotal,
     notes,
     confirmExisting,
+    forceNew,
     wellnessPackageId
   } = req.body
 
@@ -251,8 +252,8 @@ exports.createLabWalkIn = asyncHandler(async (req, res, next) => {
     ? await User.findOne({ $or: orConditions })
     : null
 
-  // If any account exists but staff hasn't confirmed yet, ask for confirmation
-  if (patient && !confirmExisting) {
+  // If any account exists but staff hasn't confirmed or forced-new yet, ask for confirmation
+  if (patient && !confirmExisting && !forceNew) {
     const safeEmail = patient.email?.includes('@ibamhealth.guest')
       ? null
       : patient.email
@@ -269,14 +270,19 @@ exports.createLabWalkIn = asyncHandler(async (req, res, next) => {
   let isNewPatient = false
   let tempPassword = null
 
-  if (!patient) {
+  // forceNew: staff confirmed these are different people who share a phone/email.
+  // Create a fresh account; omit the taken phone to avoid a unique-key conflict.
+  if (!patient || forceNew) {
     isNewPatient = true
+    const suffix = `${Date.now()}_${(patientPhone || '').replace(/\D/g, '').slice(-8)}`
     const hasRealEmail = !!patientEmail?.trim()
     const guestEmail = hasRealEmail
       ? patientEmail.toLowerCase().trim()
-      : `walkin_${Date.now()}_${patientPhone
-          .replace(/\D/g, '')
-          .slice(-8)}@ibamhealth.guest`
+      : `walkin_${suffix}@ibamhealth.guest`
+
+    // When forceNew, the phone may already be taken — omit it so the new account
+    // gets a null phone. Staff should record the real number in notes if needed.
+    const phoneToSave = forceNew ? undefined : patientPhone.trim()
 
     tempPassword = `Ibam@${Math.floor(100000 + Math.random() * 900000)}`
 
@@ -284,14 +290,14 @@ exports.createLabWalkIn = asyncHandler(async (req, res, next) => {
       patient = await User.create({
         name: patientName.trim(),
         email: guestEmail,
-        phone: patientPhone.trim(),
+        ...(phoneToSave ? { phone: phoneToSave } : {}),
         password: tempPassword,
         role: 'patient',
         isVerified: false
       })
     } catch (createErr) {
-      // E11000 means email or phone is taken by a user we didn't find with our query
-      // (e.g. a guest email collision). Re-query without role filter and treat as existing.
+      // E11000 means email or phone is taken (e.g. guest email collision).
+      // Re-query and treat as existing.
       if (createErr.code === 11000) {
         patient = await User.findOne({ $or: orConditions })
         if (!patient)

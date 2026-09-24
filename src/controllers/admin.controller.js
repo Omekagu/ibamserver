@@ -2280,31 +2280,41 @@ exports.createWalkInLabRequest = asyncHandler(async (req, res, next) => {
     return next(new AppError('At least one test must be selected.', 400))
   }
 
-  // Find existing patient by phone or email
+  // Find existing user by phone or email (no role filter — any role can be a walk-in patient)
   const orConditions = []
   if (patientPhone) orConditions.push({ phone: patientPhone.trim() })
   if (patientEmail)
     orConditions.push({ email: patientEmail.toLowerCase().trim() })
 
   let patient = orConditions.length
-    ? await User.findOne({ $or: orConditions, role: 'patient' })
+    ? await User.findOne({ $or: orConditions })
     : null
 
   // Create guest patient account if not found
   if (!patient) {
+    const suffix = `${Date.now()}_${patientPhone.replace(/\D/g, '').slice(-8)}`
     const guestEmail = patientEmail?.trim()
       ? patientEmail.toLowerCase().trim()
-      : `walkin_${Date.now()}_${patientPhone
-          .replace(/\D/g, '')
-          .slice(-8)}@ibamhealth.guest`
-    patient = await User.create({
-      name: patientName.trim(),
-      email: guestEmail,
-      phone: patientPhone.trim(),
-      password: crypto.randomBytes(16).toString('hex'),
-      role: 'patient',
-      isVerified: false
-    })
+      : `walkin_${suffix}@ibamhealth.guest`
+    try {
+      patient = await User.create({
+        name: patientName.trim(),
+        email: guestEmail,
+        phone: patientPhone.trim(),
+        password: crypto.randomBytes(16).toString('hex'),
+        role: 'patient',
+        isVerified: false
+      })
+    } catch (createErr) {
+      // E11000: phone/email taken by a user the role-less query still somehow missed
+      if (createErr.code === 11000) {
+        patient = await User.findOne({ $or: orConditions })
+        if (!patient)
+          return next(new AppError('Account conflict — please try again.', 409))
+      } else {
+        throw createErr
+      }
+    }
   }
 
   const amountNaira = Number(totalAmount) || 0
