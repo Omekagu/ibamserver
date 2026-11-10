@@ -169,6 +169,22 @@ exports.verifyAdminLoginOtp = asyncHandler(async (req, res, next) => {
   sendSuccess(res, 200, 'Login successful.', { user, ...tokens });
 });
 
+exports.resendAdminLoginOtp = asyncHandler(async (req, res, next) => {
+  const { adminUserId } = req.body;
+  if (!adminUserId) return next(new AppError('adminUserId required.', 400));
+
+  const user = await User.findById(adminUserId);
+  if (!user || !['admin', 'lab_scientist'].includes(user.role))
+    return next(new AppError('Invalid request.', 400));
+  if (!user.isActive) return next(new AppError('Account deactivated. Contact support.', 403));
+
+  const otp = generateOTP();
+  storeOTP(`admin_login:${user._id}`, otp);
+  sendOTPEmail(user.email, otp).catch(() => {});
+
+  sendSuccess(res, 200, 'New code sent to your email.');
+});
+
 exports.sendOTP = asyncHandler(async (req, res, next) => {
   const { phone } = req.body;
   if (!phone) return next(new AppError('Phone number required.', 400));

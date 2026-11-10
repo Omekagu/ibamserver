@@ -122,6 +122,12 @@ router.post('/verify-admin-otp',
   validate, ctrl.verifyAdminLoginOtp
 );
 
+router.post('/resend-admin-otp',
+  otpVerifyLimiter,
+  [body('adminUserId').notEmpty().withMessage('adminUserId required')],
+  validate, ctrl.resendAdminLoginOtp
+);
+
 router.post('/refresh-token', refreshLimiter, ctrl.refreshToken);
 router.post('/forgot-password', forgotPasswordLimiter, ctrl.forgotPassword);
 router.patch('/reset-password/:token', resetPasswordLimiter, ctrl.resetPassword);
